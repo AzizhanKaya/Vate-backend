@@ -262,10 +262,60 @@ impl Router {
 
             }
 
+            ("/like", Method::POST) => {
+
+                let parts: Vec<&str> = http.data.split(':').collect();
+                if parts.len() != 3 {
+                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain");
+                }
+    
+                let pub_key = parts[0];
+                let content = parts[1];
+                let sign = parts[2];
+                let hash = parts[3];
+                
+                /*
+                
+                Past-Hash
+                Post
+                    a
+                        b
+                            c
+                            
+                            
+                Next-hash=hash(Past-Hash:Post)
+
+                a.hash = hash(Next-hash:a.content)
+                a.sign = sign(a.hash)
+                b.sign = sign(hash(a.hash:b.content))
+                
+                
+                 */
+                let hash = digest( format!("{pub_key}:{content}"));
+                let valid = verify::verify(pub_key, &hash, sign);
+
+                match verify::verify(pub_key, &hash, sign) {
+
+                    Ok(valid) => {
+                        if valid {
+
+                            match database::like(pub_key, content, sign, &hash) {
+                                Ok(()) => ("200 OK", "Posted successfully".into(), "text/plain"),
+                                Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
+                            }
+                        } 
+                        else {
+                            ("401 Unauthorized", "Invalid signature".into(), "text/plain")
+                        }
+                    }
+                    Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
+                }
+
+            }
+
             ("/time", Method::GET) => {
 
                 ("200 OK", database::get_time().into(), "text/plain")
-
             }
     
             _ => {

@@ -69,7 +69,7 @@ pub fn post(pub_key: &str, subject: &str, message: &str, time: &str, sign: &str,
     let server_time = timestamp.parse::<u64>().map_err(|_| "Failed to parse current timestamp".to_string())?;
     let client_time = time.parse::<u64>().map_err(|_| "Failed to parse provided time".to_string())?;
 
-    if server_time.abs_diff(client_time) > 30 {
+    if server_time.abs_diff(client_time) > 5 {
         return Err(format!("Time is not synchronized: {server_time}"));
     }
 
@@ -240,6 +240,13 @@ pub fn get_posts(subject: &str, time: &str, post_num: u8) -> Option<String> {
     }
 
     Some(json!(posts_json).to_string())
+}
+
+pub fn like(pub_key: &str, content: &str,sign: &str, hash: &str) -> Result<(), String> {
+
+
+
+    todo!()
 }
 
 
