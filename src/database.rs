@@ -1,5 +1,5 @@
 #[warn(unreachable_code)]
-
+#[warn(while_true)]
 use std::fs;
 use std::io::{Write, BufRead, BufReader, Read};
 use std::path::Path;
@@ -7,6 +7,8 @@ use chrono::Utc;
 use sha256::digest;
 use std::fs::{File, OpenOptions};
 use serde_json::json;
+
+use crate::Post;
 
 pub fn get_time() -> String {
 
@@ -32,7 +34,7 @@ pub fn check_userlist(file: &File, pub_key: &str) -> Option<()> {
     Some(())
 }
 
-pub fn register(pub_key: &str) -> Result<(), String> {
+pub fn register(pub_key: String) -> Result<(), String> {
 
     let dir = format!("./{}", pub_key);
     let userlist_path = "user.list";
@@ -45,7 +47,7 @@ pub fn register(pub_key: &str) -> Result<(), String> {
 
     let file = File::open(userlist_path).map_err(|_| "Failed to open user.list".to_string())?;
 
-    let user_exists = check_userlist(&file, pub_key).is_none();
+    let user_exists = check_userlist(&file, &pub_key).is_none();
 
     if user_exists {
         return Err("User already exists".to_string());
@@ -62,24 +64,29 @@ pub fn register(pub_key: &str) -> Result<(), String> {
 }
 
 
-pub fn post(pub_key: &str, subject: &str, message: &str, time: &str, sign: &str, hash: &str) -> Result<(), String> {
+pub fn post(post: Post) -> Result<(), String> {
 
     let timestamp = get_time();
 
     let server_time = timestamp.parse::<u64>().map_err(|_| "Failed to parse current timestamp".to_string())?;
-    let client_time = time.parse::<u64>().map_err(|_| "Failed to parse provided time".to_string())?;
+    let client_time = post.last().time.parse::<u64>().map_err(|_| "Failed to parse provided time".to_string())?;
 
     if server_time.abs_diff(client_time) > 5 {
         return Err(format!("Time is not synchronized: {server_time}"));
     }
 
-    let dir_path = Path::new(pub_key);
+    let mut dir_path = Path::new(&post.last().pub_key);
 
     if !dir_path.exists() {
         return Err("User has not registered".to_string());
     }
 
-    
+    dir_path = Path::new(&post.pub_key);
+
+    if !dir_path.exists() {
+        return Err("User not found".to_string());
+    }
+
 
     let mut posts = vec![];
 
@@ -109,36 +116,142 @@ pub fn post(pub_key: &str, subject: &str, message: &str, time: &str, sign: &str,
         1
     };
 
-    let (past_hash, next_hash) = if let Some(last_post) = last_post {
+    if post.post.is_none(){
 
-        let last_post_path = dir_path.join(last_post);
-        let mut file = File::open(last_post_path).map_err(|e| e.to_string())?;
-        let mut last_post_content = String::new();
-        file.read_to_string(&mut last_post_content).map_err(|e| e.to_string())?;
+        
+        
+        let (past_hash, next_hash) = if let Some(last_post) = last_post {
 
-        let last_next_hash = last_post_content
-            .lines()
-            .last()
-            .ok_or("Failed to read next_hash from last post".to_string())?;
+            let last_post_path = dir_path.join(last_post);
+            let mut file = File::open(last_post_path).map_err(|e| e.to_string())?;
+            let mut last_post_content = String::new();
+            file.read_to_string(&mut last_post_content).map_err(|e| e.to_string())?;
 
-        let next_hash = digest(format!("{last_next_hash}:{hash}"));
+            let last_next_hash = last_post_content
+                .lines()
+                .last()
+                .ok_or("Failed to read next_hash from last post".to_string())?
+                .to_string();
 
-        (last_next_hash.to_string(), next_hash)  
+            let next_hash = post.hash(last_next_hash.clone());
+
+            (last_next_hash, next_hash)
+        }
+        else {
+            let past_hash = digest(format!("{}:{}:{}:{}", 
+                post.pub_key,
+                post.subject.unwrap(),
+                post.message,
+                post.time
+            ));
+
+            let next_hash = post.hash(past_hash.clone());
+            (past_hash, next_hash)
+        };
+
+        let file_name = format!("{}.{}.{}.post",post_number, post.subject.unwrap(), post.time);
+        let file_path = dir_path.join(file_name);
+
+        let mut file = File::create(file_path).map_err(|e| e.to_string())?;
+        let content = format!("{past_hash}\n\n{}:{}:{}\n\n{next_hash}", post.pub_key, post.message, post.sign);
+        file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        
+        Ok(())
     }
     else {
 
-        let next_hash = digest(format!("{hash}:{hash}"));
-        (hash.to_string(), next_hash)
-    };
+        let file_name = format!("{}.{}.{}.post",post_number, post.subject.unwrap(), post.time);
+        let file_path = dir_path.join(file_name);
+        let file = File::open(&file_path).map_err(|e|e.to_string())?;
+        let reader = BufReader::new(file);
 
-    let file_name = format!("{post_number}.{subject}.{timestamp}.post");
-    let file_path = dir_path.join(file_name);
+        let mut current_post = &post;
 
-    let mut file = File::create(file_path).map_err(|e| e.to_string())?;
-    let content = format!("{past_hash}\n\n{pub_key}:{message}:{sign}\n\n{next_hash}");
-    file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        let mut lines = reader.lines();
+            
+        while let Some(line) = lines.next() {
 
-    Ok(())
+
+            let line = line.map_err(|e| e.to_string())?;
+            let level = line.chars().take_while(|&c| c == ' ').count();
+    
+            if level == 1 {
+                let expected_line = format!(
+                    "{}:{}:{}",
+                    current_post.pub_key,
+                    current_post.message,
+                    current_post.sign
+                );
+    
+                if line.trim() == expected_line {
+                    // Move to the next post in the linked list
+                    if let Some(ref next_post) = current_post.next {
+                        current_post = next_post;
+                    } else {
+                        // If there is no next post, we may need to add the last post
+                        return Err("Last post not added".to_string());
+                    }
+                }
+            }
+        }
+
+        /*
+        
+        
+        while true{
+
+            let line = match lines.next() {
+                Some(Ok(line)) => line,
+                Some(Err(e)) => return Err(e.to_string()),
+                None => break,
+            };
+
+            let mut level = line.chars().take_while(|&c| c == ' ').count();
+
+            if level == 1 {
+
+                if line.trim() == (format!("{}:{}:{}:{}", 
+                            current_post.pub_key,
+                            current_post.subject,
+                            current_post.message,
+                            current_post.time)){
+
+
+                                
+                for i in 2..=post.lenght(){
+
+
+                        let inline = lines.next().unwrap().unwrap();
+
+                        level = inline.chars().take_while(|&c| c == ' ').count();
+
+                        if level == i {
+
+
+                            
+                            while let Some(ref next_post) = current.post {
+                                current = next_post;
+                            }
+                            current
+
+
+                        }
+
+
+
+
+                    }
+
+
+                        
+
+                } */
+
+        
+        
+        Ok(())
+    }
+
 }
 
 pub fn get_posts(subject: &str, time: &str, post_num: u8) -> Option<String> {
@@ -227,11 +340,11 @@ pub fn get_posts(subject: &str, time: &str, post_num: u8) -> Option<String> {
         let (pub_key, message, sign) = (content_parts[0], content_parts[1], content_parts[2]);
 
         let post_json = json!({
-            subject: parts[1],
-            time: parts[2],
-            content: {
-                pub_key: pub_key,
-                message: message,
+            "subject": parts[1],
+            "time": parts[2],
+            "content": {
+                "pub_key": pub_key,
+                "message": message,
                 "sign": sign,
             }
         });

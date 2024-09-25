@@ -6,6 +6,7 @@ use std::io::prelude::*;
 use std::time::Duration;
 use std::thread;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 mod threads;
 mod verify;
 mod database;
@@ -106,6 +107,64 @@ impl HTTP {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Post {
+    past_hash: Option<String>,
+    pub_key: String,
+    subject: Option<String>,
+    message: String,
+    time: String,
+    sign: String,
+    post: Option<Box<Post>>,
+}
+
+impl Post {
+
+    pub fn new(data: &str) -> Option<Self> {
+        
+        let posts: Post = serde_json::from_str(data).ok()?;
+
+        Some(posts)
+    }
+
+    pub fn last(&self) -> &Post {
+        let mut current = self;
+        while let Some(ref next_post) = current.post {
+            current = next_post;
+        }
+        current
+    }
+
+    pub fn lenght(&self) -> u16 {
+        let mut len = 1;
+        let mut current = self;
+        while let Some(ref next_post) = current.post {
+            len += 1;
+            current = next_post;
+        }
+        len
+    }
+
+    pub fn hash(&self, past_hash: String) -> String {
+
+        let hash = digest(format!("{}:{}:{}:{}:{}", 
+            self.past_hash.clone().unwrap_or(past_hash),
+            self.pub_key,
+            self.subject.clone().unwrap_or("None".to_string()),
+            self.message,
+            self.time
+        ));
+
+        if let Some(ref post) = self.post {
+            Self::hash(post, hash)
+        } else {
+            hash
+        }
+
+    }
+
+}
+
 
 struct Router;
 
@@ -130,24 +189,25 @@ impl Router {
 
     fn route(http: HTTP) -> Vec<u8> {
 
-        let (status, data, content_type) = match (http.path.as_str(), http.method) {
+        let (status, data) = match (http.path.as_str(), http.method) {
 
             ("/", Method::GET) => {
                 let data = Self::file_contents("index.html");
-                ("200 OK", data, "text/html")
+                ("200 OK", data)
             }
     
             ("/sleep", Method::GET) => {
                 thread::sleep(Duration::from_secs(5));
                 let data = Self::file_contents("index.html");
-                ("200 OK", data, "text/html")
+                ("200 OK", data)
             }
 
             ("/sign", Method::POST) => {
 
                 let parts: Vec<&str> = http.data.split('|').collect();
+
                 if parts.len() != 2 {
-                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain");
+                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain")
                 }
 
                 let message = parts[0];
@@ -155,11 +215,11 @@ impl Router {
 
                 let hash = digest(message);
                 
-                match verify::sign(priv_key, &hash) {
+                match verify::sign(priv_key.into(), &hash) {
 
-                    Ok(sign) => ("200 OK", format!("{:x}", sign).into_bytes(), "text/plain"),
+                    Ok(sign) => ("200 OK", format!("{:x}", sign).into_bytes() ),
 
-                    Err(e) => ("500 Internal Server Error", e.into_bytes(), "text/plain")
+                    Err(e) => ("500 Internal Server Error", e.into_bytes() )
 
                 }
             }
@@ -169,14 +229,15 @@ impl Router {
                 let (pub_key, priv_key) = verify::create_key();
                 let data = format!("{:x}:{:x}", pub_key.to_bytes(), priv_key.to_bytes());
                 
-                ("200 OK", data.into_bytes(), "text/plain")
+                ("200 OK", data.into_bytes())
             }
             
             ("/register", Method::POST) => {
 
                 let parts: Vec<&str> = http.data.split(':').collect();
+
                 if parts.len() != 2 {
-                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain");
+                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain")
                 }
     
                 let pub_key = parts[0];
@@ -189,19 +250,19 @@ impl Router {
                     Ok(valid) => {
                         
                         if valid {
-                            match database::register(pub_key) {
-                                Ok(()) => ("200 OK", "User registered successfully".into(), "text/plain"),
-                                Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
+                            match database::register(pub_key.to_string()) {
+                                Ok(()) => ("200 OK", "User registered successfully".into()),
+                                Err(e) => ("500 Internal Server Error", e.into()),
                             }
                         } else {
-                            ("401 Unauthorized", "Invalid signature".into(), "text/plain")
+                            ("401 Unauthorized", "Invalid signature".into())
                         }
                     }
-                    Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
+                    Err(e) => ("500 Internal Server Error", e.into()),
                 }
             }
 
-            ("/post", Method::GET) => {
+            ("/posts", Method::GET) => {
 
                 if let (Some(subject),Some(time)) = (http.params.get("sub"), http.params.get("t")){
 
@@ -212,110 +273,57 @@ impl Router {
 
                     if let Some(posts) = database::get_posts(subject, time, post_num){
 
-                        ("200 OK", posts.into(), "application/json")
+                        ("200 OK", posts.into())
                     }
                     else {
 
-                        ("404 Not Found", "None".into(), "text/plain")
+                        ("404 Not Found", "None".into())
                     }
                     
                 } else {
                     
-                    ("422 Unprocessable Content", "Missing paramters".into() , "text/plain")
+                    ("422 Unprocessable Content", "Missing paramters".into())
                 }
 
             }
     
             ("/post", Method::POST) => {
 
-                let parts: Vec<&str> = http.data.split(':').collect();
-                if parts.len() != 5 {
-                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain");
-                }
-    
-                let pub_key = parts[0];
-                let subject = parts[1];
-                let message = parts[2];
-                let time = parts[3];
-                let sign = parts[4];
-    
-                let hash_str = format!("{pub_key}:{subject}:{message}:{time}");
-                let hash = digest(hash_str);
-                let valid = verify::verify(pub_key, &hash, sign);
+                let posts: Post = match Post::new(http.data.as_str()) {
+                    Some(posts) => posts,
+                    None => return Self::respond("404 Not Found", "Invalid post".into(), "text/plain"),
+                };
+                
+                let post = posts.last();
 
-                match verify::verify(pub_key, &hash, sign) {
+                match verify::verify(&post.pub_key, &posts.hash(posts.past_hash.clone().unwrap()), &post.sign) {
 
                     Ok(valid) => {
                         if valid {
 
-                            match database::post(pub_key, subject, message, time, sign, &hash) {
-                                Ok(()) => ("200 OK", "Posted successfully".into(), "text/plain"),
-                                Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
+                            match database::post(posts) {
+                                Ok(()) => ("200 OK", "Posted successfully".into()),
+                                Err(e) => ("500 Internal Server Error", e.into()),
                             }
                         } 
                         else {
-                            ("401 Unauthorized", "Invalid signature".into(), "text/plain")
+                            ("401 Unauthorized", "Invalid signature".into())
                         }
                     }
-                    Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
+                    Err(e) => ("500 Internal Server Error", e.into())
                 }
 
             }
-
-            ("/like", Method::POST) => {
-
-                let parts: Vec<&str> = http.data.split(':').collect();
-                if parts.len() != 3 {
-                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain");
-                }
-    
-                let pub_key = parts[0];
-                let content = parts[1];
-                let sign = parts[2];
-                let hash = parts[3];
+            
+            (path, Method::GET) if path.starts_with("/user/") => {
                 
-                /*
-                
-                Past-Hash
-                Post
-                    a
-                        b
-                            c
-                            
-                            
-                Next-hash=hash(Past-Hash:Post)
 
-                a.hash = hash(Next-hash:a.content)
-                a.sign = sign(a.hash)
-                b.sign = sign(hash(a.hash:b.content))
-                
-                
-                 */
-                let hash = digest( format!("{pub_key}:{content}"));
-                let valid = verify::verify(pub_key, &hash, sign);
-
-                match verify::verify(pub_key, &hash, sign) {
-
-                    Ok(valid) => {
-                        if valid {
-
-                            match database::like(pub_key, content, sign, &hash) {
-                                Ok(()) => ("200 OK", "Posted successfully".into(), "text/plain"),
-                                Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
-                            }
-                        } 
-                        else {
-                            ("401 Unauthorized", "Invalid signature".into(), "text/plain")
-                        }
-                    }
-                    Err(e) => ("500 Internal Server Error", e.into(), "text/plain"),
-                }
-
+                todo!()
             }
 
             ("/time", Method::GET) => {
 
-                ("200 OK", database::get_time().into(), "text/plain")
+                ("200 OK", database::get_time().into())
             }
     
             _ => {
@@ -323,33 +331,33 @@ impl Router {
                 let path = format!(".{}", http.path);
                 
                 if path.contains("../") {
-                    Self::respond("404 Not Found", "???".into(), "text/plain");
+                    ("404 Not Found", "???".to_string());
                 }
 
-                let extension = path.split('.').last().unwrap_or("");
-
-                let content_type = match extension {
-                    "html" => "text/html",
-                    "css" => "text/css",
-                    "js" => "application/javascript",
-                    "png" => "image/png",
-                    "jpg" | "jpeg" => "image/jpeg",
-                    "gif" => "image/gif",
-                    "ico" => "image/x-icon",
-                    "svg" => "image/svg+xml",
-                    "json" => "application/json",
-                    _ => "application/octet-stream",
-                };
-            
-                if let Ok(data) = fs::read(&path) {
-                    ("200 OK", data, content_type)
+                if let Ok(data) = fs::read(path) {
+                    ("200 OK", data)
                 } else {
                     let data = Self::file_contents("404.html");
-                    ("404 Not Found", data, "text/html")
+                    return Self::respond("404 Not Found", data, "text/html")
                 }
             }
             
         };
+
+        let content_type = match http.path.split('.').last().unwrap_or("") {
+            
+            "html" | "/" | "/sleep" => "text/html",
+            "css" => "text/css",
+            "js" => "application/javascript",
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "ico" => "image/x-icon",
+            "svg" => "image/svg+xml",
+            "json" | "/posts" => "application/json",
+            _ => "text/plain",
+
+        }; 
     
         Self::respond(status, data, content_type)
     }

@@ -19,6 +19,16 @@ pub fn create_key() -> (VerifyingKey, SigningKey) {
     (pub_key, priv_key)
 }
 
+pub fn priv_to_pub(priv_key: &str) -> Result<VerifyingKey, String> {
+
+    let priv_key_bytes = hex_to_byte(priv_key)?;
+    let priv_key = SigningKey::from_bytes(&priv_key_bytes)
+        .map_err(|_| "Invalid private key".to_string())?;
+    let pub_key = VerifyingKey::from(&priv_key);
+    
+    Ok(pub_key)
+}
+
 pub fn sign(priv_key: &str, hash: &str) -> Result<Signature, String> {
 
     let priv_key_bytes = hex_to_byte(priv_key)?;
