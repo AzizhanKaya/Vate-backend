@@ -111,7 +111,7 @@ impl HTTP {
 struct Post {
     past_hash: Option<String>,
     pub_key: String,
-    subject: Option<String>,
+    subject: String,
     message: String,
     time: String,
     sign: String,
@@ -150,7 +150,7 @@ impl Post {
         let hash = digest(format!("{}:{}:{}:{}:{}", 
             self.past_hash.clone().unwrap_or(past_hash),
             self.pub_key,
-            self.subject.clone().unwrap_or("None".to_string()),
+            self.subject,
             self.message,
             self.time
         ));
@@ -296,6 +296,12 @@ impl Router {
                 
                 let post = posts.last();
 
+
+                match database::post(posts) {
+                    Ok(()) => ("200 OK", "Posted successfully".into()),
+                    Err(e) => ("500 Internal Server Error", e.into()),
+                }
+                /* 
                 match verify::verify(&post.pub_key, &posts.hash(posts.past_hash.clone().unwrap()), &post.sign) {
 
                     Ok(valid) => {
@@ -312,6 +318,7 @@ impl Router {
                     }
                     Err(e) => ("500 Internal Server Error", e.into())
                 }
+                */
 
             }
             
