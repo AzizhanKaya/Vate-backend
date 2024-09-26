@@ -141,13 +141,6 @@ pub fn post(post: Post) -> Result<(), String> {
     
                 (last_next_hash, next_hash)
             }
-            /*
-            current_post.pub_key,
-            current_post.subject,
-            current_post.message,
-            current_post.time,
-            current_post.sign
-             */
             else {
                 let past_hash = digest(format!("{}:{}:{}:{}", 
                     post.pub_key,
@@ -164,7 +157,7 @@ pub fn post(post: Post) -> Result<(), String> {
             let file_path = dir_path.join(file_name);
     
             let mut file = File::create(file_path).map_err(|e| e.to_string())?;
-            let content = format!("{past_hash}\n\n{}:{}:{}:{}:{}\n", post.pub_key, post.subject ,post.message, post.time, post.sign);
+            let content = format!("{past_hash}\n\n{}:{}:{}:{}:{}\n\n{next_hash}", post.pub_key, post.subject ,post.message, post.time, post.sign);
             file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
             
             Ok(())
@@ -219,7 +212,6 @@ pub fn post(post: Post) -> Result<(), String> {
                         );
                     } 
                     if current_post.post.is_none(){
-                        position += expected_line.len() +1;
                         found = true;
                         level+=1;
                         break;
@@ -229,10 +221,21 @@ pub fn post(post: Post) -> Result<(), String> {
         }
 
         if found {
-            file.seek(SeekFrom::Start(position as u64)).map_err(|e| e.to_string())?;
-            let mut writer = BufWriter::new(&file);
-            let data = format!("{}{}", " ".repeat(level) , expected_line);
-            writeln!(writer, "{}", data).map_err(|e| e.to_string())?;
+              
+        file.seek(SeekFrom::Start(position as u64));
+
+        
+        let mut remainder = Vec::new();
+        file.read_to_end(&mut remainder);
+
+        file.seek(SeekFrom::Start(position as u64));
+
+        let data = format!("{}{}\n", " ".repeat(level), expected_line);
+
+        file.write_all(data.as_bytes());
+
+        file.write_all(&remainder);
+
         }
         
         Ok(())
