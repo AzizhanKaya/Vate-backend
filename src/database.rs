@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Read, Write};
 use std::path::Path;
 use chrono::Utc;
 use sha256::digest;
-use std::fs::{File, OpenOptions};
+use std::fs::{read_dir, File, OpenOptions};
 use serde_json::json;
 
 use crate::Post;
@@ -75,13 +75,11 @@ pub fn post(post: Post) -> Result<(), String> {
         return Err(format!("Time is not synchronized: {server_time}"));
     }
 
-    let mut dir_path = Path::new(&post.pub_key);
+    let dir_path = Path::new(&post.pub_key);
 
     if !dir_path.exists() {
         return Err("User has not registered".to_string());
     }
-
-    dir_path = Path::new(&post.pub_key);
 
     if !dir_path.exists() {
         return Err("User not found".to_string());
@@ -342,6 +340,92 @@ pub fn get_posts(subject: &str, time: &str, post_num: u8) -> Option<String> {
     }
 
     Some(json!(posts_json).to_string())
+}
+
+pub fn get_sub_posts(posts: Post) -> Option<String> {
+
+    let user_path = Path::new(&posts.pub_key);
+    let user = fs::read_dir(user_path).ok()?;
+   
+
+    for file in user {
+
+        
+        let file = file.unwrap();
+        let file_name = file.file_name();
+        let file_name = file_name.to_string_lossy();
+
+        let parts: Vec<&str> = file_name.split('.').collect();
+
+        if parts.len() != 4 || *parts.last().unwrap() != "post" {
+            continue;
+        }
+        let post_number = parts[0];
+        let post_subject = parts[1];
+        let post_time = parts[2];
+
+        if post_subject == posts.subject && post_time == posts.time {
+            let post_name = format!("{}.{}.{}.post", post_number, post_subject, post_time);
+            let post_path = user_path.join(post_name);
+            let mut file = OpenOptions::new().read(true).write(false).open(&post_path).map_err(|e| e.to_string())?;
+            let reader = BufReader::new(&file);
+
+            let lines = reader.lines();
+            let mut i = 0;
+            let mut position = 0;
+            let mut found = false;
+            let mut level = 0;
+            let mut current_post= &posts;
+
+            let mut expected_line = format!(
+                "{}:{}:{}:{}:{}",
+                current_post.pub_key,
+                current_post.subject,
+                current_post.message,
+                current_post.time,
+                current_post.sign
+            );
+
+            while let Some(line) = lines.next() {
+
+
+                let line = line.map_err(|e| e.to_string())?;
+                level = line.chars().take_while(|&c| c == ' ').count();
+
+                position += line.len() + 1;
+
+                if level == i {
+                    
+                    if line.trim() == expected_line {
+
+                        if let Some(ref next_post) = current_post.post {
+                            current_post = next_post;
+                            i+=1;
+                            expected_line = format!(
+                                "{}:{}:{}:{}:{}",
+                                current_post.pub_key,
+                                current_post.subject,
+                                current_post.message,
+                                current_post.time,
+                                current_post.sign
+                            );
+                        } 
+                        if current_post.post.is_none(){
+                             
+                            todo!("return (level+1) lines")  
+
+                        }
+                    }
+                }
+            }
+
+
+
+
+        }
+    }
+
+    None
 }
 
 pub fn like(pub_key: &str, content: &str,sign: &str, hash: &str) -> Result<(), String> {

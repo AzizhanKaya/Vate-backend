@@ -286,22 +286,30 @@ impl Router {
                 }
 
             }
+
+            ("/sub_post", Method::POST) => {
+
+                let posts: Post = match Post::new(http.data.as_str()) {
+                    Some(posts) => posts,
+                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), "text/plain"),
+                };
+
+                match database::get_sub_posts(posts) {
+                    Some(data) => ("200 OK", data.into()),
+                    None => ("404 Not Found", "No sub post founded".into()) 
+                }
+            }
     
             ("/post", Method::POST) => {
 
                 let posts: Post = match Post::new(http.data.as_str()) {
                     Some(posts) => posts,
-                    None => return Self::respond("404 Not Found", "Invalid post".into(), "text/plain"),
+                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), "text/plain"),
                 };
                 
                 let post = posts.last();
 
 
-                match database::post(posts) {
-                    Ok(()) => ("200 OK", "Posted successfully".into()),
-                    Err(e) => ("500 Internal Server Error", e.into()),
-                }
-                /* 
                 match verify::verify(&post.pub_key, &posts.hash(posts.past_hash.clone().unwrap()), &post.sign) {
 
                     Ok(valid) => {
@@ -318,7 +326,6 @@ impl Router {
                     }
                     Err(e) => ("500 Internal Server Error", e.into())
                 }
-                */
 
             }
             
