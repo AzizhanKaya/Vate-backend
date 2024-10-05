@@ -1,11 +1,13 @@
 #[warn(unreachable_code)]
 #[warn(while_true)]
+#[warn(unused_must_use)]
+
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Read, Write};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Read, Write};
 use std::path::Path;
 use chrono::Utc;
 use sha256::digest;
-use std::fs::{read_dir, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use serde_json::json;
 
 use crate::Post;
@@ -220,23 +222,24 @@ pub fn post(post: Post) -> Result<(), String> {
 
         if found {
               
-        file.seek(SeekFrom::Start(position as u64));
+            file.seek(SeekFrom::Start(position as u64));
 
-        
-        let mut remainder = Vec::new();
-        file.read_to_end(&mut remainder);
+            
+            let mut remainder = Vec::new();
+            file.read_to_end(&mut remainder);
 
-        file.seek(SeekFrom::Start(position as u64));
+            file.seek(SeekFrom::Start(position as u64));
 
-        let data = format!("{}{}\n", " ".repeat(level), expected_line);
+            let data = format!("{}{}\n", " ".repeat(level), expected_line);
 
-        file.write_all(data.as_bytes());
+            file.write_all(data.as_bytes());
 
-        file.write_all(&remainder);
+            file.write_all(&remainder);
 
+            return Ok(());
         }
         
-        Ok(())
+        Err("Couldn't find the post-chain".to_string())
         }
     }
 }
@@ -342,10 +345,10 @@ pub fn get_posts(subject: &str, time: &str, post_num: u8) -> Option<String> {
     Some(json!(posts_json).to_string())
 }
 
-pub fn get_sub_posts(posts: Post) -> Option<String> {
+pub fn get_sub_posts(posts: Post) -> Result<Option<String>, String> {
 
     let user_path = Path::new(&posts.pub_key);
-    let user = fs::read_dir(user_path).ok()?;
+    let user = fs::read_dir(user_path).map_err(|e| e.to_string())?;
    
 
     for file in user {
@@ -367,14 +370,13 @@ pub fn get_sub_posts(posts: Post) -> Option<String> {
         if post_subject == posts.subject && post_time == posts.time {
             let post_name = format!("{}.{}.{}.post", post_number, post_subject, post_time);
             let post_path = user_path.join(post_name);
-            let mut file = OpenOptions::new().read(true).write(false).open(&post_path).map_err(|e| e.to_string())?;
+            let file = OpenOptions::new().read(true).write(false).open(&post_path).map_err(|e| e.to_string())?;
             let reader = BufReader::new(&file);
 
-            let lines = reader.lines();
+            let mut lines = reader.lines();
             let mut i = 0;
             let mut position = 0;
-            let mut found = false;
-            let mut level = 0;
+            
             let mut current_post= &posts;
 
             let mut expected_line = format!(
@@ -386,11 +388,11 @@ pub fn get_sub_posts(posts: Post) -> Option<String> {
                 current_post.sign
             );
 
-            while let Some(line) = lines.next() {
+            while let Some(line_res) = lines.next() {
 
 
-                let line = line.map_err(|e| e.to_string())?;
-                level = line.chars().take_while(|&c| c == ' ').count();
+                let line = line_res.map_err(|e| e.to_string())?;
+                let mut level = line.chars().take_while(|&c| c == ' ').count();
 
                 position += line.len() + 1;
 
@@ -409,23 +411,54 @@ pub fn get_sub_posts(posts: Post) -> Option<String> {
                                 current_post.time,
                                 current_post.sign
                             );
-                        } 
-                        if current_post.post.is_none(){
-                             
-                            todo!("return (level+1) lines")  
+                        }
+                        
+                        if current_post.post.is_none() && expected_line == lines.next().ok_or("Not found in Post")?.unwrap().trim() {
+                            
+                            let mut posts_json = Vec::new();
+                            i+=1;
 
+                            while let Some(line_res) = lines.next()  {
+
+                                let line = line_res.map_err(|e| e.to_string())?;
+                                level = line.chars().take_while(|&c| c == ' ').count();
+
+                                if level == i {
+
+                                    let parts: Vec<&str> = line.split(':').collect();
+                                    let (pub_key, subject, message, time,sign) = (parts[0].trim(), parts[1], parts[2], parts[3], parts[4]);
+
+                                    let post_json = json!({
+                                        "pub_key": pub_key,
+                                        "subject": subject,
+                                        "message": message,
+                                        "time": time,
+                                        "sign": sign,
+                                    });
+                            
+                                    posts_json.push(post_json);
+                                    continue;
+                                }
+
+                                if level == i-1 {
+
+                                    break;
+                                }
+
+                            }
+
+                            if !posts_json.is_empty(){
+                                
+                                return Ok(Some(json!(posts_json).to_string()));
+                            }
                         }
                     }
                 }
             }
-
-
-
-
         }
     }
 
-    None
+    Ok(None)
 }
 
 pub fn like(pub_key: &str, content: &str,sign: &str, hash: &str) -> Result<(), String> {

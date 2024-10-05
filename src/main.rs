@@ -287,7 +287,7 @@ impl Router {
 
             }
 
-            ("/sub_post", Method::POST) => {
+            ("/sub_posts", Method::POST) => {
 
                 let posts: Post = match Post::new(http.data.as_str()) {
                     Some(posts) => posts,
@@ -295,8 +295,9 @@ impl Router {
                 };
 
                 match database::get_sub_posts(posts) {
-                    Some(data) => ("200 OK", data.into()),
-                    None => ("404 Not Found", "No sub post founded".into()) 
+                    Ok(Some(post)) => ("200 OK", post.into()),
+                    Ok(None) => ("404 Not Found", "".into()),
+                    Err(e) => ("500 Internal Server Error", e.into())
                 }
             }
     
@@ -309,12 +310,15 @@ impl Router {
                 
                 let post = posts.last();
 
-
+                match database::post(posts) {
+                    Ok(()) => ("200 OK", "Posted successfully".into()),
+                    Err(e) => ("500 Internal Server Error", e.into()),
+                }
+                /* 
                 match verify::verify(&post.pub_key, &posts.hash(posts.past_hash.clone().unwrap()), &post.sign) {
 
                     Ok(valid) => {
                         if valid {
-
                             match database::post(posts) {
                                 Ok(()) => ("200 OK", "Posted successfully".into()),
                                 Err(e) => ("500 Internal Server Error", e.into()),
@@ -326,7 +330,7 @@ impl Router {
                     }
                     Err(e) => ("500 Internal Server Error", e.into())
                 }
-
+                */
             }
             
             (path, Method::GET) if path.starts_with("/user/") => {
@@ -368,7 +372,7 @@ impl Router {
             "gif" => "image/gif",
             "ico" => "image/x-icon",
             "svg" => "image/svg+xml",
-            "json" | "/posts" => "application/json",
+            "json" | "/posts" | "/sub_posts" => "application/json",
             _ => "text/plain",
 
         }; 
