@@ -66,7 +66,7 @@ pub fn register(pub_key: String) -> Result<(), String> {
 }
 
 
-pub fn post(post: Post) -> Result<(), String> {
+pub fn post(mut post: Post) -> Result<(), String> {
 
     let timestamp = get_time();
 
@@ -77,15 +77,13 @@ pub fn post(post: Post) -> Result<(), String> {
         return Err(format!("Time is not synchronized: {server_time}"));
     }
 
-    let dir_path = Path::new(&post.pub_key);
+    let binding = post.pub_key.clone();
+    let dir_path = Path::new(&binding);
 
     if !dir_path.exists() {
         return Err("User has not registered".to_string());
     }
 
-    if !dir_path.exists() {
-        return Err("User not found".to_string());
-    }
 
 
     let mut posts = vec![];
@@ -136,8 +134,12 @@ pub fn post(post: Post) -> Result<(), String> {
                     .last()
                     .ok_or("Failed to read next_hash from last post".to_string())?
                     .to_string();
+
+                if last_next_hash != post.past_hash.clone().unwrap() {
+                    return Err("Past hashes does not match".to_string());
+                }
     
-                let next_hash = post.hash(last_next_hash.clone());
+                let next_hash = post.hash();
     
                 (last_next_hash, next_hash)
             }
@@ -148,8 +150,8 @@ pub fn post(post: Post) -> Result<(), String> {
                     post.message,
                     post.time
                 ));
-    
-                let next_hash = post.hash(past_hash.clone());
+                post.past_hash = Some(past_hash.clone());
+                let next_hash = post.hash();
                 (past_hash, next_hash)
             };
     

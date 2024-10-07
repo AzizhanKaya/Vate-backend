@@ -42,7 +42,7 @@ pub fn sign(priv_key: &str, hash: &str) -> Result<Signature, String> {
     Ok(signature)
 }
 
-pub fn verify(pub_key: &str, hash: &str, signature: &str) -> Result<bool, String> {
+pub fn verify(pub_key: &str, hash: String, signature: &str) -> Result<bool, String> {
 
     let pub_key_bytes = hex_to_byte(pub_key)?;
     let pub_key = VerifyingKey::from_sec1_bytes(&pub_key_bytes)
@@ -51,7 +51,7 @@ pub fn verify(pub_key: &str, hash: &str, signature: &str) -> Result<bool, String
     let signature_bytes = hex_to_byte(signature)?;
     let signature = Signature::try_from(signature_bytes.as_slice()).map_err(|_| "Invalid signature".to_string())?;
 
-    let hash_bytes = hex_to_byte(hash)?;
+    let hash_bytes = hex_to_byte(hash.as_str())?;
 
     Ok(pub_key.verify(&hash_bytes, &signature).is_ok())
 }

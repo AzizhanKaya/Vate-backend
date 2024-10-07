@@ -1,5 +1,8 @@
 #![allow(unused_variables, dead_code)]
 
+#[cfg(test)]
+mod tests;
+
 use std::fs;
 use std::net::{TcpListener, TcpStream};
 use std::io::prelude::*;
@@ -108,7 +111,7 @@ impl HTTP {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Post {
+pub struct Post {
     past_hash: Option<String>,
     pub_key: String,
     subject: String,
@@ -145,28 +148,75 @@ impl Post {
         len
     }
 
-    pub fn hash(&self, past_hash: String) -> String {
+    pub fn hash(&mut self) -> String {
 
-        let hash = digest(format!("{}:{}:{}:{}:{}", 
-            self.past_hash.clone().unwrap_or(past_hash),
+        let hash: String = digest(format!("{}:{}:{}:{}:{}", 
+            self.past_hash.as_ref().unwrap(),
             self.pub_key,
             self.subject,
             self.message,
             self.time
         ));
 
-        if let Some(ref post) = self.post {
-            Self::hash(post, hash)
+        if let Some(ref mut post) = self.post {
+            post.past_hash = Some(hash);
+            Self::hash(post)
         } else {
             hash
         }
 
     }
 
+    pub fn iter(&self) -> PostIterator {
+        PostIterator {
+            current: Some(self),
+        }
+    }
+
+}
+
+pub struct PostIterator<'a> {
+    current: Option<&'a Post>,
+}
+
+impl<'a> Iterator for PostIterator<'a> {
+    type Item = &'a Post;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current_post = self.current?;
+        self.current = current_post.post.as_deref();
+        Some(current_post)
+    }
+
+    fn last(mut self) -> Option<Self::Item> {
+        let mut last_item = None;
+        while let Some(item) = self.next() {
+            last_item = Some(item);
+        }
+        last_item
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        for _ in 0..n {
+            if self.next().is_none() {
+                return None;
+            }
+        }
+        self.next()
+    }
 }
 
 
+
 struct Router;
+
+macro_rules! hmap {
+    ( $( $key:expr => $value:expr ),* ) => {{
+        let mut map = HashMap::new();
+        $( map.insert($key, $value); )*
+        map
+    }};
+}
 
 impl Router {
     
@@ -174,15 +224,22 @@ impl Router {
         fs::read(filename).unwrap()
     }
 
-    fn respond(status: &str, data: Vec<u8>, content_type: &str) -> Vec<u8> {
-        let header = format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
+    fn respond(status: &str, data: Vec<u8>, headers: HashMap<&str, &str>) -> Vec<u8> {
+
+        let mut response_header = format!(
+            "HTTP/1.1 {}\r\nContent-Length: {}\r\n",
             status,
-            content_type,
             data.len()
         );
+
+        for (key, value) in headers {
+            response_header.push_str(&format!("{}: {}\r\n", key, value));
+        }
+
+        response_header.push_str("\r\n");
+
         let mut response = Vec::new();
-        response.extend(header.as_bytes());
+        response.extend(response_header.as_bytes());
         response.extend(data);
         response
     }
@@ -207,7 +264,7 @@ impl Router {
                 let parts: Vec<&str> = http.data.split('|').collect();
 
                 if parts.len() != 2 {
-                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain")
+                    return Self::respond("400 Bad Request", "Invalid data format".into(), hmap!{"Content-Type"=>"text/plain"})
                 }
 
                 let message = parts[0];
@@ -237,7 +294,7 @@ impl Router {
                 let parts: Vec<&str> = http.data.split(':').collect();
 
                 if parts.len() != 2 {
-                    return Self::respond("400 Bad Request", "Invalid data format".into(), "text/plain")
+                    return Self::respond("400 Bad Request", "Invalid data format".into(), hmap!{"Content-Type"=>"text/plain"})
                 }
     
                 let pub_key = parts[0];
@@ -245,7 +302,7 @@ impl Router {
                 let hash = digest(pub_key);
 
 
-                match verify::verify(pub_key, &hash, sign) {
+                match verify::verify(pub_key, hash, sign) {
 
                     Ok(valid) => {
                         
@@ -279,10 +336,9 @@ impl Router {
 
                         ("404 Not Found", "None".into())
                     }
-                    
-                } else {
-                    
-                    ("422 Unprocessable Content", "Missing paramters".into())
+                } 
+                else {
+                    return Self::respond("422 Unprocessable Content", "Missing paramters".into(), hmap!("Content-Type"=>"text/plain"))
                 }
 
             }
@@ -291,7 +347,7 @@ impl Router {
 
                 let posts: Post = match Post::new(http.data.as_str()) {
                     Some(posts) => posts,
-                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), "text/plain"),
+                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
                 };
 
                 match database::get_sub_posts(posts) {
@@ -303,19 +359,19 @@ impl Router {
     
             ("/post", Method::POST) => {
 
-                let posts: Post = match Post::new(http.data.as_str()) {
+                let mut posts: Post = match Post::new(http.data.as_str()) {
                     Some(posts) => posts,
-                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), "text/plain"),
+                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
                 };
                 
-                let post = posts.last();
+                
+                let post: &Post = posts.last();
+                let pub_key = &post.pub_key;
+                let sign = &post.sign;
 
-                match database::post(posts) {
-                    Ok(()) => ("200 OK", "Posted successfully".into()),
-                    Err(e) => ("500 Internal Server Error", e.into()),
-                }
-                /* 
-                match verify::verify(&post.pub_key, &posts.hash(posts.past_hash.clone().unwrap()), &post.sign) {
+                let post_hash = post.hash();
+                
+                match verify::verify(pub_key, post_hash, sign) {
 
                     Ok(valid) => {
                         if valid {
@@ -330,7 +386,7 @@ impl Router {
                     }
                     Err(e) => ("500 Internal Server Error", e.into())
                 }
-                */
+                
             }
             
             (path, Method::GET) if path.starts_with("/user/") => {
@@ -356,7 +412,7 @@ impl Router {
                     ("200 OK", data)
                 } else {
                     let data = Self::file_contents("404.html");
-                    return Self::respond("404 Not Found", data, "text/html")
+                    return Self::respond("404 Not Found", data, hmap! {"Content-Type"=>"text/html"})
                 }
             }
             
@@ -375,9 +431,9 @@ impl Router {
             "json" | "/posts" | "/sub_posts" => "application/json",
             _ => "text/plain",
 
-        }; 
-    
-        Self::respond(status, data, content_type)
+        };
+
+        Self::respond(status, data, hmap!{"Content-Type"=>content_type})
     }
 
     fn connection(mut stream: TcpStream) {
@@ -390,7 +446,7 @@ impl Router {
         let response = if let Some(http) = HTTP::new(&request) {
             Self::route(http)
         } else {
-            Self::respond("400 Bad Request", "".into(), "text/plain")
+            Self::respond("400 Bad Request", "".into(), hmap!{"Content-Type"=>"text/plain"})
         };
         
         stream.write(response.as_slice()).unwrap();
