@@ -55,25 +55,13 @@ fn test_sub_post(){
     }"#;
 
     let mut post = Post::new(sub_post_data).expect("Failed to create Post from JSON");
-
+    let post_hash = post.hash();
+    assert_eq!(post_hash, "18597814b0e0a971931828964925eda41b3e389ac99794ff630c66bcaaa51d37");
     assert_eq!(post.last().subject, "sub post subject");
     assert_eq!(post.last().message, "sub post Message");
     assert_eq!(post.lenght(), 2);
 
     let mut post_iter = post.iter();
 
-    
-
-    let hash: String = digest(format!("{}:{}:{}:{}:{}", 
-            post.past_hash.as_ref().unwrap(),
-            post.pub_key,
-            post.subject,
-            post.message,
-            post.time
-    ));
-
-    
-
-    assert_eq!(post.hash(), hash);
-
+    println!("{:#?}", post_iter.nth(0))
 }

@@ -15,11 +15,11 @@ mod verify;
 mod database;
 use crate::threads::ThreadPool;
 use sha256::digest;
-
+use regex::Regex;
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:3000").unwrap();
-    let pool = ThreadPool::new(10);
+    let pool = ThreadPool::new(5);
     
     for stream in listener.incoming() {
         let stream = stream.unwrap();
@@ -29,7 +29,6 @@ fn main() {
     }
     
 }
-
 #[derive(Debug)]
 enum Method {
     GET,
@@ -46,12 +45,14 @@ struct HTTP {
     path: String,
     params: HashMap<String, String>,
     headers: HashMap<String, String>,
-    data: String,
+    data: Vec<u8>,
 }
 
 impl HTTP {
-    fn new(request: &str) -> Option<Self> {
-        let mut lines = request.lines();
+    fn new(request: &[u8]) -> Option<Self> {
+
+        let request_str = String::from_utf8_lossy(request);
+        let mut lines = request_str.lines();
         let first_line = lines.next()?.split_whitespace().collect::<Vec<&str>>();
 
         if first_line.len() != 3 {
@@ -82,35 +83,35 @@ impl HTTP {
         };
 
         let mut headers = HashMap::new();
-        let mut data = String::new();
-        let mut in_headers = true;
-
+        
+        
         for line in lines {
+
             if line.is_empty() {
-                in_headers = false;
-                continue;
+                break;
             }
 
-            if in_headers {
-                if let Some((key, value)) = line.split_once(':') {
-                    headers.insert(key.trim().to_string(), value.trim().to_string());
-                }
-            } else {
-                data.push_str(line);
+            if let Some((key, value)) = line.split_once(':') {
+                headers.insert(key.trim().to_string(), value.trim().to_string());
             }
         }
 
+        let mut data = Vec::new();
+        let data_start_index = request.windows(4).position(|window| window == b"\r\n\r\n")? + 4;
+        data.extend_from_slice(&request[data_start_index..]);
+
+        
         Some(Self {
             method,
             path,
             params,
             headers,
-            data: data.trim_matches('\0').to_string(),
+            data: data
         })
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Post {
     past_hash: Option<String>,
     pub_key: String,
@@ -173,6 +174,17 @@ impl Post {
         }
     }
 
+    pub fn format(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.pub_key,
+            self.subject,
+            self.message,
+            self.time,
+            self.sign
+        )
+    }
+
 }
 
 pub struct PostIterator<'a> {
@@ -187,25 +199,7 @@ impl<'a> Iterator for PostIterator<'a> {
         self.current = current_post.post.as_deref();
         Some(current_post)
     }
-
-    fn last(mut self) -> Option<Self::Item> {
-        let mut last_item = None;
-        while let Some(item) = self.next() {
-            last_item = Some(item);
-        }
-        last_item
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        for _ in 0..n {
-            if self.next().is_none() {
-                return None;
-            }
-        }
-        self.next()
-    }
 }
-
 
 
 struct Router;
@@ -261,7 +255,8 @@ impl Router {
 
             ("/sign", Method::POST) => {
 
-                let parts: Vec<&str> = http.data.split('|').collect();
+                let data_string = String::from_utf8(http.data.to_vec()).unwrap_or_default();
+                let parts: Vec<&str> = data_string.split('|').collect();
 
                 if parts.len() != 2 {
                     return Self::respond("400 Bad Request", "Invalid data format".into(), hmap!{"Content-Type"=>"text/plain"})
@@ -291,31 +286,35 @@ impl Router {
             
             ("/register", Method::POST) => {
 
-                let parts: Vec<&str> = http.data.split(':').collect();
+                let data_string = String::from_utf8(http.data.to_vec()).unwrap_or_default();
+                let parts: Vec<&str> = data_string.split(':').collect();
 
-                if parts.len() != 2 {
+                if parts.len() != 5 {
                     return Self::respond("400 Bad Request", "Invalid data format".into(), hmap!{"Content-Type"=>"text/plain"})
                 }
     
                 let pub_key = parts[0];
-                let sign = parts[1];
-                let hash = digest(pub_key);
+                let username = parts[1];
+                let bio = parts[2];
+                let pp = parts[3];
+                let sign = parts[4];
+                let hash = digest(format!("{}:{}:{}:{}",pub_key,username,bio,pp));
 
 
-                match verify::verify(pub_key, hash, sign) {
+                match verify::verify(pub_key, &hash, sign) {
 
                     Ok(valid) => {
                         
                         if valid {
                             match database::register(pub_key.to_string()) {
                                 Ok(()) => ("200 OK", "User registered successfully".into()),
-                                Err(e) => ("500 Internal Server Error", e.into()),
+                                Err(e) => ("500 Internal Server Error", e.into())
                             }
                         } else {
                             ("401 Unauthorized", "Invalid signature".into())
                         }
                     }
-                    Err(e) => ("500 Internal Server Error", e.into()),
+                    Err(e) => ("500 Internal Server Error", e.into())
                 }
             }
 
@@ -345,7 +344,8 @@ impl Router {
 
             ("/sub_posts", Method::POST) => {
 
-                let posts: Post = match Post::new(http.data.as_str()) {
+                let data_string = String::from_utf8(http.data).unwrap_or_default();
+                let posts: Post = match Post::new(&data_string) {
                     Some(posts) => posts,
                     None => return Self::respond("404 Not Found", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
                 };
@@ -359,25 +359,30 @@ impl Router {
     
             ("/post", Method::POST) => {
 
-                let mut posts: Post = match Post::new(http.data.as_str()) {
+                let data_string = String::from_utf8(http.data).unwrap_or_default();
+                println!("{data_string}");
+                let mut posts: Post = match Post::new(&data_string) {
                     Some(posts) => posts,
                     None => return Self::respond("404 Not Found", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
                 };
                 
-                
-                let post: &Post = posts.last();
-                let pub_key = &post.pub_key;
-                let sign = &post.sign;
+                let post_hash = posts.hash();
+                let post: & Post = posts.last();
+                let pub_key: &str = &post.pub_key;
+                let sign: &str = &post.sign;
 
-                let post_hash = post.hash();
-                
-                match verify::verify(pub_key, post_hash, sign) {
+                match database::post(posts) {
+                    Ok(()) => ("200 OK", "Posted successfully".into()),
+                    Err(e) => ("500 Internal Server Error", e.into())
+                }
+                /*
+                match verify::verify(pub_key, &post_hash, sign) {
 
                     Ok(valid) => {
                         if valid {
                             match database::post(posts) {
                                 Ok(()) => ("200 OK", "Posted successfully".into()),
-                                Err(e) => ("500 Internal Server Error", e.into()),
+                                Err(e) => ("500 Internal Server Error", e.into())
                             }
                         } 
                         else {
@@ -386,6 +391,7 @@ impl Router {
                     }
                     Err(e) => ("500 Internal Server Error", e.into())
                 }
+                 */
                 
             }
             
@@ -393,6 +399,25 @@ impl Router {
                 
 
                 todo!()
+            }
+
+            (path, Method::POST) if path.starts_with("/upload/") => {
+
+                let profile_pic_re = Regex::new(r"^/upload/([a-fA-F0-9]{64})/pp\.(png|jpg)$").unwrap();
+                
+                match profile_pic_re.captures(path) {
+
+                    Some(profile_pic) => {
+
+                        match database::upload(path, http.data) {
+                            Ok(()) => ("200 OK", "Image upload successful".into()),
+                            Err(e) => ("500 Internal Server Error", e.into()),
+                        }
+
+                    }
+
+                    None => return Self::respond("422 Unprocessable Content", "Make sure about file format".into(), hmap!("Content-Type"=>"text/plain")),
+                }
             }
 
             ("/time", Method::GET) => {
@@ -438,19 +463,79 @@ impl Router {
 
     fn connection(mut stream: TcpStream) {
 
-        let mut buffer = [0; 1024];
-        stream.read(&mut buffer).unwrap();
+        const HEADERS_SIZE: usize = 512;
     
-        let request = String::from_utf8_lossy(&buffer[..]); 
-    
-        let response = if let Some(http) = HTTP::new(&request) {
-            Self::route(http)
-        } else {
-            Self::respond("400 Bad Request", "".into(), hmap!{"Content-Type"=>"text/plain"})
-        };
+        let mut header_buffer = [0; HEADERS_SIZE];
+        let mut header_len = 0;
         
-        stream.write(response.as_slice()).unwrap();
-        stream.flush().unwrap();
-    }
+        loop {
+            match stream.read(&mut header_buffer[header_len..]) {
+                Ok(0) => {
+                    
+                    println!("Connection closed by peer");
+                    return;
+                }
+                Ok(n) => {
+                    header_len += n;
+                    if let Some(pos) = header_buffer[..header_len].windows(4).position(|w| w == b"\r\n\r\n") {
+                        header_len = pos + 4;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error reading headers: {}", e);
+                    return;
+                }
+            }
+        }
+        
+    
+        let http_request = &header_buffer[..header_len];
+    
+        
+        let http = match HTTP::new(http_request) {
+            Some(req) => req,
+            None => {
+                let response = Router::respond(
+                    "400 Bad Request",
+                    "Invalid Request".into(),
+                    hmap! {"Content-Type" => "text/plain"},
+                );
+                stream.write_all(&response).unwrap();
+                return;
+            }
+        };
+    
+        
+        let content_length = http.headers.get("Content-Length")
+            .and_then(|len| len.parse::<usize>().ok())
+            .unwrap_or(0);
+        
+        let request: Vec<u8> = if HEADERS_SIZE < header_len + content_length {
+            let left_to_read = header_len + content_length - HEADERS_SIZE;
+            let mut body_buffer = vec![0; left_to_read];
+            
+            
+            stream.read_exact(&mut body_buffer).unwrap();
+            
+            
+            let mut complete_request = Vec::from(&header_buffer);
+            complete_request.extend_from_slice(&body_buffer);
+            println!("{:?}",complete_request);
+            complete_request
+        } else {
+            Vec::from(&header_buffer[..header_len+content_length])
+        };
 
+        let response = if let Some(http) = HTTP::new(&request) {
+            Router::route(http)
+        } else {
+            Router::respond("400 Bad Request", "".into(), hmap! {"Content-Type" => "text/plain"})
+        };
+    
+        
+        stream.write_all(&response).unwrap();
+    }
+        
+    
 }

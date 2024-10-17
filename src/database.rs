@@ -36,16 +36,13 @@ pub fn check_userlist(file: &File, pub_key: &str) -> Option<()> {
     Some(())
 }
 
+pub fn upload(path: &str, data: Vec<u8>) -> Result<(), String> {
+    todo!()
+}
+
 pub fn register(pub_key: String) -> Result<(), String> {
 
-    let dir = format!("./{}", pub_key);
     let userlist_path = "user.list";
-
-    fs::create_dir_all(&dir).map_err(|_| "Failed to create user directory".to_string())?;
-
-    if !Path::new(userlist_path).exists() {
-        File::create(userlist_path).map_err(|_| "Failed to create user.list file".to_string())?;
-    }
 
     let file = File::open(userlist_path).map_err(|_| "Failed to open user.list".to_string())?;
 
@@ -53,6 +50,15 @@ pub fn register(pub_key: String) -> Result<(), String> {
 
     if user_exists {
         return Err("User already exists".to_string());
+    }
+
+    let dir = format!("./{}", pub_key);
+    
+
+    fs::create_dir_all(&dir).map_err(|_| "Failed to create user directory".to_string())?;
+
+    if !Path::new(userlist_path).exists() {
+        File::create(userlist_path).map_err(|_| "Failed to create user.list file".to_string())?;
     }
 
     let mut file = OpenOptions::new()
@@ -77,8 +83,8 @@ pub fn post(mut post: Post) -> Result<(), String> {
         return Err(format!("Time is not synchronized: {server_time}"));
     }
 
-    let binding = post.pub_key.clone();
-    let dir_path = Path::new(&binding);
+    let path_binding = post.pub_key.clone();
+    let dir_path = Path::new(&path_binding);
 
     if !dir_path.exists() {
         return Err("User has not registered".to_string());
@@ -172,17 +178,11 @@ pub fn post(mut post: Post) -> Result<(), String> {
         let mut file = OpenOptions::new().read(true).write(true).open(&file_path).map_err(|e| e.to_string())?;
         let reader = BufReader::new(&file);
 
-        let mut current_post = &post;
+        let mut post_iter = post.iter();
+        let mut current_post = post_iter.next().unwrap();
         let mut lines = reader.lines();
         
-        let mut expected_line = format!(
-            "{}:{}:{}:{}:{}",
-            current_post.pub_key,
-            current_post.subject,
-            current_post.message,
-            current_post.time,
-            current_post.sign
-        );
+        let mut expected_line = current_post.format();
 
         let mut i = 0;
         let mut position = 0;
@@ -191,34 +191,33 @@ pub fn post(mut post: Post) -> Result<(), String> {
 
         while let Some(line) = lines.next() {
 
-
             let line = line.map_err(|e| e.to_string())?;
             level = line.chars().take_while(|&c| c == ' ').count();
 
             position += line.len() + 1;
 
-            if level == i {
-                
-                if line.trim() == expected_line {
+            if level < i {
+                break;
+            }
 
-                    if let Some(ref next_post) = current_post.post {
-                        current_post = next_post;
-                        i+=1;
-                        expected_line = format!(
-                            "{}:{}:{}:{}:{}",
-                            current_post.pub_key,
-                            current_post.subject,
-                            current_post.message,
-                            current_post.time,
-                            current_post.sign
-                        );
-                    } 
-                    if current_post.post.is_none(){
+            if level == i && line.trim() == expected_line {
+
+                current_post = post_iter.next().unwrap();
+                expected_line = current_post.format();
+
+                match &current_post.post {
+                    
+                    Some(post) => {
+                        i+=1
+                    }
+
+                    None => {
                         found = true;
                         level+=1;
                         break;
                     }
                 }
+                
             }
         }
 
@@ -232,7 +231,7 @@ pub fn post(mut post: Post) -> Result<(), String> {
 
             file.seek(SeekFrom::Start(position as u64));
 
-            let data = format!("{}{}\n", " ".repeat(level), expected_line);
+            let data = format!("{}{}\n", " ".repeat(level), current_post.format());
 
             file.write_all(data.as_bytes());
 
