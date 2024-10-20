@@ -9,6 +9,7 @@ use chrono::Utc;
 use sha256::digest;
 use std::fs::{File, OpenOptions};
 use serde_json::json;
+use serde_json::Value;
 
 use crate::Post;
 
@@ -22,51 +23,51 @@ pub fn get_time() -> String {
 
 
 pub fn check_userlist(file: &File, pub_key: &str) -> Option<()> {
-    
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
-        match line {
-            Ok(line) if line == pub_key => return None,
-            Err(_) => return None,
-            _ => continue,
+        
+        match line.unwrap().split(':').nth(0) {
+            Some(key) if key == pub_key => return Some(()),
+            Some(_) | None => continue,
         }
     }
 
-    Some(())
+    None
 }
 
-pub fn upload(path: &str, data: Vec<u8>) -> Result<(), String> {
-    todo!()
-}
 
-pub fn register(pub_key: String) -> Result<(), String> {
+pub fn register(pub_key: &str, username: &str, bio: &str, sign: &str) -> Result<(), &'static str> {
 
     let userlist_path = "user.list";
 
-    let file = File::open(userlist_path).map_err(|_| "Failed to open user.list".to_string())?;
+    let file = File::open(userlist_path).map_err(|_| "Failed to open user.list")?;
 
-    let user_exists = check_userlist(&file, &pub_key).is_none();
+    let user_exists = check_userlist(&file, pub_key).is_some();
 
     if user_exists {
-        return Err("User already exists".to_string());
+        return Err("User already exists");
     }
 
     let dir = format!("./{}", pub_key);
-    
 
-    fs::create_dir_all(&dir).map_err(|_| "Failed to create user directory".to_string())?;
+    fs::create_dir_all(&dir).map_err(|_| "Failed to create user directory")?;
 
     if !Path::new(userlist_path).exists() {
-        File::create(userlist_path).map_err(|_| "Failed to create user.list file".to_string())?;
+        File::create(userlist_path).map_err(|_| "Failed to create user.list file")?;
     }
+
+    let info_path = format!("{}/info", dir);
+    let mut info_file = File::create(&info_path).map_err(|_| "Failed to create info file")?;
+    writeln!(info_file, "{}:{}", username, bio).map_err(|_| "Failed to write to info file")?;
+
 
     let mut file = OpenOptions::new()
         .write(true)
         .append(true)
         .open(userlist_path)
-        .map_err(|_| "Failed to open user.list for writing".to_string())?;
-    writeln!(file, "{}", pub_key).map_err(|_| "Failed to write to user.list".to_string())?;
+        .map_err(|_| "Failed to open user.list for writing")?;
+    writeln!(file, "{}:{}:{}", pub_key, username, sign).map_err(|_| "Failed to write to user.list")?;
 
     Ok(())
 }
@@ -161,7 +162,7 @@ pub fn post(mut post: Post) -> Result<(), String> {
                 (past_hash, next_hash)
             };
     
-            let file_name = format!("{}.{}.{}.post",post_number+1, post.subject, post.time);
+            let file_name = format!("{}.{}.{}.post",post_number, post.subject, post.time);
             let file_path = dir_path.join(file_name);
     
             let mut file = File::create(file_path).map_err(|e| e.to_string())?;
@@ -314,7 +315,9 @@ pub fn get_posts(subject: &str, time: &str, post_num: u8) -> Option<String> {
         let mut lines = contents.lines();
 
         let past_hash = lines.next()?;
+        lines.next()?;
         let content = lines.next()?;
+        lines.next()?;
         let next_hash = lines.last()?;
 
         let parts: Vec<&str> = Path::new(&post_path)
@@ -325,36 +328,43 @@ pub fn get_posts(subject: &str, time: &str, post_num: u8) -> Option<String> {
             .collect();
 
         let content_parts: Vec<&str> = content.split(':').collect();
-        if content_parts.len() != 3 {
+        if content_parts.len() != 5 {
             continue;
         }
-        let (pub_key, message, sign) = (content_parts[0], content_parts[1], content_parts[2]);
+        let (pub_key, subject, message, time, sign) = (content_parts[0], content_parts[1],content_parts[2], content_parts[3], content_parts[4]);
+
+        let user = user(pub_key).unwrap();
+
+        let account: Value = serde_json::from_str(&user).expect("Json parsing error");
 
         let post_json = json!({
-            "subject": parts[1],
-            "time": parts[2],
-            "content": {
+            "account":{
+                "img_type":account["img_type"],
+                "username":account["username"],
                 "pub_key": pub_key,
-                "message": message,
-                "sign": sign,
-            }
+            },
+            "past_hash": past_hash,
+            "subject": parts[1],
+            "message": message,
+            "time": parts[2],
+            "sign": sign,
         });
 
         posts_json.push(post_json);
     }
 
+    
+
     Some(json!(posts_json).to_string())
 }
 
-pub fn get_sub_posts(posts: Post) -> Result<Option<String>, String> {
+pub fn get_sub_posts(post: Post) -> Result<Option<String>, String> {
 
-    let user_path = Path::new(&posts.pub_key);
+    let user_path = Path::new(&post.pub_key);
     let user = fs::read_dir(user_path).map_err(|e| e.to_string())?;
-   
 
     for file in user {
 
-        
         let file = file.unwrap();
         let file_name = file.file_name();
         let file_name = file_name.to_string_lossy();
@@ -368,7 +378,8 @@ pub fn get_sub_posts(posts: Post) -> Result<Option<String>, String> {
         let post_subject = parts[1];
         let post_time = parts[2];
 
-        if post_subject == posts.subject && post_time == posts.time {
+        if post_subject == post.subject && post_time == post.time {
+
             let post_name = format!("{}.{}.{}.post", post_number, post_subject, post_time);
             let post_path = user_path.join(post_name);
             let file = OpenOptions::new().read(true).write(false).open(&post_path).map_err(|e| e.to_string())?;
@@ -376,18 +387,9 @@ pub fn get_sub_posts(posts: Post) -> Result<Option<String>, String> {
 
             let mut lines = reader.lines();
             let mut i = 0;
-            let mut position = 0;
-            
-            let mut current_post= &posts;
-
-            let mut expected_line = format!(
-                "{}:{}:{}:{}:{}",
-                current_post.pub_key,
-                current_post.subject,
-                current_post.message,
-                current_post.time,
-                current_post.sign
-            );
+            let mut post_iter = post.iter();
+            let mut current_post= post_iter.next().unwrap();
+            let mut expected_line = current_post.format();
 
             while let Some(line_res) = lines.next() {
 
@@ -395,70 +397,54 @@ pub fn get_sub_posts(posts: Post) -> Result<Option<String>, String> {
                 let line = line_res.map_err(|e| e.to_string())?;
                 let mut level = line.chars().take_while(|&c| c == ' ').count();
 
-                position += line.len() + 1;
-
-                if level == i {
+                if level == i && line.trim() == expected_line {
                     
-                    if line.trim() == expected_line {
+                    current_post = post_iter.next().unwrap();
+                    expected_line = current_post.format();
+                    
+                    i+=1;
+                    match &current_post.post {
 
-                        if let Some(ref next_post) = current_post.post {
-                            current_post = next_post;
-                            i+=1;
-                            expected_line = format!(
-                                "{}:{}:{}:{}:{}",
-                                current_post.pub_key,
-                                current_post.subject,
-                                current_post.message,
-                                current_post.time,
-                                current_post.sign
-                            );
-                        }
-                        
-                        if current_post.post.is_none() && expected_line == lines.next().ok_or("Not found in Post")?.unwrap().trim() {
-                            
-                            let mut posts_json = Vec::new();
-                            i+=1;
-
-                            while let Some(line_res) = lines.next()  {
-
-                                let line = line_res.map_err(|e| e.to_string())?;
-                                level = line.chars().take_while(|&c| c == ' ').count();
-
-                                if level == i {
-
-                                    let parts: Vec<&str> = line.split(':').collect();
-                                    let (pub_key, subject, message, time,sign) = (parts[0].trim(), parts[1], parts[2], parts[3], parts[4]);
-
-                                    let post_json = json!({
-                                        "pub_key": pub_key,
-                                        "subject": subject,
-                                        "message": message,
-                                        "time": time,
-                                        "sign": sign,
-                                    });
-                            
-                                    posts_json.push(post_json);
-                                    continue;
-                                }
-
-                                if level == i-1 {
-
-                                    break;
-                                }
-
-                            }
-
-                            if !posts_json.is_empty(){
+                        Some(post) => { }
+                        None => {
+                                let mut posts_json = Vec::new();
+        
+                                while let Some(line_res) = lines.next()  {
+        
+                                    let line = line_res.map_err(|e| e.to_string())?;
+                                    level = line.chars().take_while(|&c| c == ' ').count();
+        
+                                    if level == i {
+        
+                                        let parts: Vec<&str> = line.split(':').collect();
+                                        let (pub_key, subject, message, time,sign) = (parts[0].trim(), parts[1], parts[2], parts[3], parts[4].trim());
+        
+                                        let post_json = json!({
+                                            "pub_key": pub_key,
+                                            "subject": subject,
+                                            "message": message,
+                                            "time": time,
+                                            "sign": sign,
+                                        });
                                 
-                                return Ok(Some(json!(posts_json).to_string()));
+                                        posts_json.push(post_json);
+                                        continue;
+                                    }
+        
+                                    if level < i {
+                                        break;
+                                    }
+                                }
+
+                                if !posts_json.is_empty(){
+                                    return Ok(Some(json!(posts_json).to_string()));
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
-
     Ok(None)
 }
 
@@ -467,6 +453,90 @@ pub fn like(pub_key: &str, content: &str,sign: &str, hash: &str) -> Result<(), S
 
 
     todo!()
+}
+
+pub fn upload_profile_pic(path: &str, data: Vec<u8>) -> Result<(), String> {
+    
+    let user = path.split('/').nth(2).ok_or("User has not found")?;
+    
+    
+    let user_directory = format!("./{}", user);
+
+    
+    if !Path::new(&user_directory).exists() {
+        return Err("User does not exist.".to_string());
+    }
+
+    let file_format = path.split('/').nth(3).unwrap().split('.').nth(1).ok_or("File format has not found")?;
+    let pic_path = format!("./{}/pp.{}", user_directory, file_format);
+
+    
+    let mut file = File::create(&pic_path).map_err(|e| e.to_string())?;
+    file.write_all(&data).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn user(user: &str) -> Result<String, String> {
+
+    
+
+    let file = File::open("user.list").map_err(|_| "Failed to open user.list")?;
+
+    if check_userlist(&file,user).is_none() {
+        return Err("User does not exist.".to_string());
+    }
+
+    let user_directory = format!("./{}", user);
+
+    if !Path::new(&user_directory).exists() {
+        return Err("User does not exist.".to_string());
+    }
+
+    fn img_ext(user_directory: &str) -> Option<String> {
+        let img_type = fs::read_dir(user_directory)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry.path().is_file() && matches!(
+                    entry.path().extension().and_then(|ext| ext.to_str()),
+                    Some("png") | Some("jpeg") | Some("jpg")
+                )
+            })
+            .filter_map(|entry| {
+                entry.path().extension().and_then(|ext| {
+                    let extension_str = ext.to_string_lossy().into_owned();
+                    Some(extension_str)
+                })
+            })
+            .next();
+    
+        img_type 
+    }
+
+    let img_type = img_ext(&user_directory);
+
+    let user_info = format!("./{}/info", user);
+    let file = File::open(&user_info).map_err(|e| e.to_string())?;
+    let reader = BufReader::new(file);
+
+    if let Some(Ok(line)) = reader.lines().next() {
+        
+        let username =line.split(':').nth(0).unwrap();
+        let bio =line.split(':').nth(1).unwrap();
+
+        let info_json = json!({
+            "username": username,
+            "bio": bio,
+            "img_type": img_type
+        });
+
+        return Ok(info_json.to_string());
+
+    } else {
+        return Err("No info found about user".to_string());
+    }
+
 }
 
 

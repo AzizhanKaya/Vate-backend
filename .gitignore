@@ -1,2 +1,6 @@
 target/*
 *.post
+*.jpeg
+*.png
+info
+user.list

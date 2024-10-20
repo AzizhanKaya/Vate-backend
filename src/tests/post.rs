@@ -63,5 +63,4 @@ fn test_sub_post(){
 
     let mut post_iter = post.iter();
 
-    println!("{:#?}", post_iter.nth(0))
 }
