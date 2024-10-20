@@ -1,6 +1,9 @@
-import { create_key } from '../../../../wasm/wasm';
+import { create_key, priv_to_pub } from '@/wasm/wasm';
 import { useState } from 'react';
 import { motion } from 'framer-motion';
+import { useDispatch } from 'react-redux';
+import { set_keys } from '@/store/auth';
+
 
 export default function Key({setCopy}){
 
@@ -9,6 +12,7 @@ export default function Key({setCopy}){
     const [icon, setIcon] = useState('copy');
     const [key, setKey] = useState(get_key());
 
+    const dispatch = useDispatch();
     
 
     function get_key() {
@@ -27,7 +31,8 @@ export default function Key({setCopy}){
 
         let iteration = 0;
 
-        let final = get_key()
+        let final = get_key();
+        console.log(final);
 
         if (isSpinning) return;
 
@@ -55,12 +60,33 @@ export default function Key({setCopy}){
         }, 20);
     }
 
+    function base64ToHex(bs64) {
+        const binaryString = atob(bs64);
+
+        const byteArray = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            byteArray[i] = binaryString.charCodeAt(i);
+        }
+        let hexString = '';
+        byteArray.forEach(byte => {
+            hexString += byte.toString(16).padStart(2, '0');
+        });
+    
+        return hexString;
+    }
+
     const handleCopy = async () => {
 
         if (isSpinning) return;
 
+        if (!navigator.clipboard) {
+            console.error("Clipboard API not available");
+            return;
+        }
+        
         try {
             await navigator.clipboard.writeText(key);
+            dispatch(set_keys({ pub_key: priv_to_pub(base64ToHex(key)), priv_key: key }));
             setIcon('ok');
             setCopy(true);
             setTimeout(() => setIcon('copy'), 1000);
@@ -111,7 +137,7 @@ export default function Key({setCopy}){
         <div className="relative overflow-hidden">
             <input 
                 className="w-[300px] h-9 bg-[#1b1d1f] text-white border border-[#2f3336] rounded px-2 focus:outline-none"
-                style={{ fontFamily: 'Space Mono, monospace' }}
+                style={{ fontFamily: 'Space Mono, monospace'}}
                 type="text" 
                 id="secretKey"
                 readOnly

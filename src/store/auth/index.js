@@ -1,35 +1,31 @@
 import { createSlice } from "@reduxjs/toolkit";
 
 const initialState = {
-    currentAccount: {
-        id: 1,
-        username: 'Aziz',
-        avatar: 'https://pbs.twimg.com/profile_images/1637771089840422912/LES2dp5X_400x400.jpg',
-        pub_key: 'WwogICAgMiwKICAgIDIuNzUsCiAgICAyLjU4NDk2MjUwMDcyMTE1Ngpd',
+    Account: {
+        username: null,
+        profile_pic: null,
+        pub_key: null,
         priv_key: null
     }
 };
 
-const authSlice = createSlice({
-    name: 'auth',
+const accountSlice = createSlice({
+    name: 'account',
     initialState,
     reducers: {
         setAccount: (state, action) => {
-            state.currentAccount = action.payload;
+            state.Account.username = action.payload.username;
         },
-        removeAccount: (state) => {
-            state.currentAccount = null;
+        setProfilePic: (state, action) => {
+            state.Account.profile_pic = action.payload.profile_pic;
         },
-        setPrivKey: (state, action) => {
-            if (state.currentAccount) {
-                state.currentAccount.priv_key = action.payload; 
-            }
+        set_keys: (state, action) => {
+            state.Account.priv_key = action.payload.priv_key;
+            state.Account.pub_key = action.payload.pub_key; 
         }
     }
 });
 
+export const { setAccount, setProfilePic, set_keys} = accountSlice.actions;
 
-export const { setAccount, removeAccount, setPrivKey} = authSlice.actions;
-
-
-export default authSlice.reducer;
+export default accountSlice.reducer;

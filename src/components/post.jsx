@@ -1,25 +1,43 @@
-import '../assets/css/border.css';
 import '../assets/css/fade.css';
 import Verify from './verify'
 
 export default function Post({ post }) {
     
-    if (!post || !post.account || !post.content.message) {
+    if (!post || !post.account || !post.message) {
       return;
+    }
+
+    let img_src;
+
+    function hexToBase64(hex) {
+      if (hex === null) return;
+      
+      const bytes = [];
+      for (let i = 0; i < hex.length; i += 2) {
+          bytes.push(parseInt(hex.substr(i, 2), 16));
+      }
+      const binaryString = String.fromCharCode(...bytes);
+      return btoa(binaryString);
+    }
+
+    if (post.account.img_type != null){
+      img_src = `http://192.168.1.25:3000/${post.account.pub_key}/pp.${post.account.img_type}`
+    }else{
+      img_src = `/profile-image.png`
     }
   
     return (
       
-      <div className="px-4 pt-3 gap-3 border border-[#2f3336] flex rounded-xl mx-5 my-3 relative bg-black cool-border r-xl">
-        <img src={post.account.img} className="w-10 h-10 rounded-full object-cover" alt="" />
+      <div className="px-4 pt-3 gap-3 border border-[#2f3336] flex rounded-xl mx-5 my-3 relative bg-black">
+        <img src={img_src} className="w-10 h-10 rounded-full object-cover" alt="" />
         <div className="flex-1 w-[90%]">
             <header className="leading-5 flex gap-2 items-center mb-0.5">
-                <a href={`/${post.account.name}`} className="hover:underline font-bold">
-                    {post.account.name}
+                <a href={`/${post.account.username}`} className="hover:underline font-bold">
+                    {post.account.username}
                 </a>
                 <div className="text-[#585858] flex items-center gap-1.5">
                     <div className="overflow-hidden whitespace-nowrap text-ellipsis w-[150px]">
-                        @{post.account.pub_key}
+                        @{hexToBase64(post.account.pub_key)}
                     </div>
                     <div>‧</div>
                     <div>{post.time}</div>
@@ -30,7 +48,7 @@ export default function Post({ post }) {
             </header>
             <div className="break-words hyphens-manual">
 
-              <img className="w-20 fade" src="/chain-sticker.png" alt="" />
+              {post.message}
 
             </div>
 

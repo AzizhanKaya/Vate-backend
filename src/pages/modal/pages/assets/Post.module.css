@@ -1,0 +1,33 @@
+.text-box{
+  display: flex;
+  position: absolute;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 4px;
+  margin-top: 20px;
+  box-shadow: 0px 5px 10px 1px rgba(0, 0, 0, 0.137);
+  transition: opacity 0.5s ease;
+}
+
+.warn-box {
+  background-color: #d65d5d;
+}
+
+.success-box{
+  background-color: #46d365;
+}
+
+.post-button {
+  font-size: 15px;
+  position: absolute;
+  background-color: rgb(59, 130, 246);
+  color: rgb(255, 255, 255);
+  padding: 0.375rem 2rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  opacity: 0;
+  bottom: 40px;
+  right: 40px;
+  transition: opacity 0.5s ease;
+}

@@ -3,7 +3,7 @@ import Home from "../pages/home";
 import Explore from "../pages/explore";
 import MainLayout from "../layouts/main";
 import Profile from "../pages/profile";
-
+import OnTheWay from "../pages/on-the-way"
 
 const routes = createBrowserRouter([
 
@@ -20,15 +20,15 @@ const routes = createBrowserRouter([
 
             {
                 path: 'explore',
-                element: <Explore />
+                element: <OnTheWay />
             },
             {
                 path: 'notifications',
-                element: <Home />
+                element: <OnTheWay />
             },
             {
                 path: ':username',
-                element: <Profile />
+                element: <OnTheWay />
             }
         ]
 

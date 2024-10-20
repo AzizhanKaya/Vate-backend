@@ -2,38 +2,26 @@ import React, { useState } from "react";
 import { slides } from "./slides";
 import "./slider.css";
 
-const Slider = () => {
+const Slider = ({setExitModal}) => {
   const [currentPage, setCurrentPage] = useState(0);
-  const [nextPage, setNextPage] = useState(1);
-  const [nextButton, setNextButton] = useState(false);
+  const [nextPage, setNextPage] = useState(null);
   const [isSliding, setSliding] = useState(false);
 
-  const goToLogin = () => {
-    setCurrentPage(0);
-    setNextPage(-1);
+  function goToPage(pageIndex) {
+    setNextPage(pageIndex);
     setSliding(true);
   };
 
-  const goToRegister = () => {
-    setCurrentPage(0); 
-    setNextPage(1);
-    setSliding(true);
+  
+  function handleAnimationEnd(event) {
+    if (nextPage === null) return;
+    if (event.animationName !== "slide-out") return;
+    setCurrentPage(nextPage);
+    setNextPage(nextPage+1);
+    setSliding(false);
   };
 
-  const handleAnimationEnd = () => {
-    setCurrentPage((prev) => {
-      const newPage = prev + 1;
-      setNextPage(newPage+1);
-      console.log(newPage);
-      return newPage;
-    })
-    setSliding(false); 
-  };
-
-  function handleNext(){
-    setSliding(true);
-    setNextButton(false);
-  }
+  
 
   const CurrentComponent = slides[currentPage];
   const NextComponent = slides[nextPage];
@@ -42,38 +30,30 @@ const Slider = () => {
     <div className="slider w-full h-full p-16 flex justify-center items-center">
       
         <div
-          className="absolute"
+          className="absolute w-full h-full"
           style={{
-            animation: isSliding ? 'slide-out 0.5s forwards' : ''
+            animation: isSliding ? 'slide-out 0.5s forwards' : '',
+            willChange: 'transform'
           }}
-          onAnimationEnd={isSliding ? handleAnimationEnd : null}
+          onAnimationEnd={handleAnimationEnd}
         >
           <CurrentComponent
-            goToLogin={goToLogin}
-            goToRegister={goToRegister}
-            setNextButton={setNextButton}
+            goToPage={goToPage}
+            setExitModal={setExitModal}
           />
         </div>
 
         {NextComponent && (
           <div
-            className="absolute next-page"
+            className="absolute next-page w-full h-full"
             style={{
-              animation: isSliding ? 'slide-in 0.5s forwards' : ''
+              animation: isSliding ? 'slide-in 0.5s forwards' : '',
+              willChange: 'transform'
             }}
           >
-            <NextComponent />
+            <NextComponent/>
           </div>
         )}
-      
-
-      {nextButton && (
-        <button className="next-button"
-          onClick={handleNext}
-        >
-          Next
-        </button>
-      )}
     </div>
   );
 };

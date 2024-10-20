@@ -29,7 +29,7 @@ const Verify = () => {
         leaveFrom="transform opacity-100"
         leaveTo="transform opacity-0"
       >
-        <div className="absolute text-center z-20 bottom-full mb-1 left-1/2 transform -translate-x-1/2 bg-[#090a0ac7] border border-[#2f3336] text-[#9fa3a7] text-sm rounded-l p-1">
+        <div className="absolute text-center z-100 bottom-full mb-1 left-1/2 transform -translate-x-1/2 bg-[#090a0ac7] border border-[#2f3336] text-[#9fa3a7] text-sm rounded-l p-1">
           Signature verified.
         </div>
       </Transition>

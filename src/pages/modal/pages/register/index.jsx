@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import Key from './key';
-import Dialog from './dialog';
 
-export default function Register({ setNextButton }) {
+
+export default function Register({goToPage}) {
   const [copy, setCopy] = useState(false);
+  const [nextButton, setNextButton] = useState(false);
 
   useEffect(() => {
     if (copy) {
@@ -11,8 +12,17 @@ export default function Register({ setNextButton }) {
     }
   }, [copy]);
 
+  function handleNext(){
+    if(copy){
+      setNextButton(false);
+      goToPage(2);
+    }
+
+  }
+  
+
   return (
-    <div className="flex flex-col items-center -mt-10">
+    <div className="flex flex-col items-center pt-[100px] w-full h-full" style={{ willChange: 'transform'}}>
       <div className="font-[Vate] p-3 text-[20px] mb-2">
         Hadi sana bir anahtar seçelim!
       </div>
@@ -21,9 +31,14 @@ export default function Register({ setNextButton }) {
         <Key setCopy={setCopy} />
       </div>
 
-      <div className="mt-[50px]">
-        <Dialog />
-      </div>
+      
+
+      <button
+        className={`next-button ${nextButton ? 'fade-in' : 'fade-out'}`}
+        onClick={handleNext}
+      >
+          Next
+      </button>
     </div>
   );
 }

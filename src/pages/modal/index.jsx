@@ -1,23 +1,16 @@
 import React from 'react';
-import { useSelector, useDispatch } from 'react-redux';
 import { motion } from 'framer-motion';
 import '../../assets/css/shine.css';
 import '../../assets/css/border.css';
 import Slider from './slider';
+import { useState } from 'react';
+import { useEffect } from 'react';
 
-const Modal = () => {
-    const dispatch = useDispatch();
-    const currentAccount = useSelector((state) => state.auth.currentAccount);
+
+const Modal = ({unMountModal}) => {
+
+    const [exitModal, setExitModal] = useState(false);
     
-
-    React.useEffect(() => {
-        if (currentAccount.priv_key) {
-            return null;
-        }
-    }, [currentAccount.priv_key, dispatch]);
-
-    
-
     const modalVariants = {
         hidden: {
             y: "-100vh",
@@ -32,9 +25,25 @@ const Modal = () => {
         },
         exit: {
             y: "100vh",
-            transition: { ease: "easeInOut" }
+            transition: {
+                type: "spring",
+                stiffness: 120,
+                damping: 20,
+            }
         }
     };
+
+    useEffect(() => {
+        if (exitModal) {
+            
+          const timer = setTimeout(() => {
+            unMountModal(true);
+          }, 500);
+    
+          
+          return () => clearTimeout(timer);
+        }
+      }, [exitModal, unMountModal]);
 
 
     return (
@@ -43,13 +52,12 @@ const Modal = () => {
             <motion.div
                 variants={modalVariants}
                 initial="hidden"
-                animate="visible"
+                animate= {exitModal ?  "exit" : "visible"}
                 exit="exit"
-                
             >
                 <div className="bg-[#161718] rounded-xl relative r-xl cool-border shadow-box w-[550px] h-[500px] items-center justify-center">
                     <div className="w-full h-full rounded-xl">
-                        <Slider />
+                        <Slider setExitModal={setExitModal}/>
                     </div>
                     
                 </div>

@@ -6,12 +6,12 @@ use sha256::digest;
 use chrono::Utc;
 
 #[wasm_bindgen]
-pub fn get_time() -> String {
+pub fn get_time() -> u64 {
 
     let now = Utc::now();
     let seconds = now.timestamp();
 
-    seconds.to_string()
+    seconds as u64
 }
 
 fn hex_to_byte(hex: &str) -> Result<Vec<u8>, String> {
@@ -31,6 +31,20 @@ pub fn create_key() -> String {
     
     format!("{:x}:{:x}",pub_key.to_bytes(), priv_key.to_bytes())
 }
+
+#[wasm_bindgen]
+pub fn priv_to_pub(priv_key: String) -> Result<String, String> {
+
+    let priv_key_bytes = hex_to_byte(&priv_key)?;
+    let priv_key = SigningKey::from_bytes(&priv_key_bytes)
+        .map_err(|_| "Invalid private key".to_string())?;
+
+
+    let pub_key = VerifyingKey::from(&priv_key);
+    
+    Ok(format!("{:x}",pub_key.to_bytes()))
+}
+
 
 #[wasm_bindgen]
 pub fn sign(priv_key: &str, hash: &str) -> Result<String, String> {

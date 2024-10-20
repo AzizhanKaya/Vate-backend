@@ -11,20 +11,7 @@ export default function Dialog(){
         "Nice! Store the key in a secure location where no one can access it, and ensure it is never lost."
     ];
 
-    const animateText = (text) => {
-        setIsAnimating(true);
-        setDisplayedText('');
-        let index = 0;
-        const interval = setInterval(() => {
-            if (index < text.length) {
-                setDisplayedText((prev) => prev + text[index-1]);
-                index++;
-            } else {
-                setIsAnimating(false);
-                clearInterval(interval);
-            }
-        }, 10);
-    };
+    
 
 
 
