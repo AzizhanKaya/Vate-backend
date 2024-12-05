@@ -332,14 +332,14 @@ impl Router {
 
             ("/posts", Method::GET) => {
 
-                if let (Some(subject),Some(time)) = (http.params.get("sub"), http.params.get("t")){
+                if let (Some(subject),Some(time), Some(direction)) = (http.params.get("sub"), http.params.get("t"), http.params.get("d")){
 
                     let default_post_num = 10;
                     let post_num = http.params.get("n")
                     .map(|n| n.parse::<u8>().unwrap_or(default_post_num))
                     .unwrap_or(default_post_num);
 
-                    if let Some(posts) = database::get_posts(subject, time, post_num){
+                    if let Some(posts) = database::get_posts(subject, time, post_num, direction){
 
                         ("200 OK", posts.into())
                     }
@@ -359,7 +359,7 @@ impl Router {
                 let data_string = String::from_utf8(http.data).unwrap_or_default();
                 let posts: Post = match Post::new(&data_string) {
                     Some(posts) => posts,
-                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
+                    None => return Self::respond("400 Bad Request", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
                 };
 
                 match database::get_sub_posts(posts) {
@@ -375,11 +375,11 @@ impl Router {
                 
                 let mut posts: Post = match Post::new(&data_string) {
                     Some(posts) => posts,
-                    None => return Self::respond("404 Not Found", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
+                    None => return Self::respond("400 Bad Request", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
                 };
                 
                 let post_hash = posts.hash();
-                let post: & Post = posts.last();
+                let post: &Post = posts.last();
                 let pub_key: &str = &post.pub_key;
                 let sign: &str = &post.sign;
 
@@ -413,12 +413,22 @@ impl Router {
                 };
 
                 match database::user(user) {
-                    Ok(info) => return Self::respond("200 OK", info.into(), hmap!(
-                        "Content-Type" => "application/json",
-                        "Access-Control-Allow-Origin" => "*",
-                        "Access-Control-Allow-Methods" => "*",
-                        "Access-Control-Allow-Headers" => "*")),
+                    Ok(info) => ("200 OK", info.into()),
                     Err(e) => ("500 Internal Server Error", e.into())
+                }
+            }
+
+            (path, Method::GET) if path.starts_with("/posts/user/") => {
+
+                let user = if let Some(u) = path.split('/').nth(3) {
+                    u
+                } else {
+                    return Self::respond("422 Unprocessable Content", "User not found".into(), hmap!("Content-Type" => "text/plain"));
+                };
+
+                match database::user_posts(user) {
+                    Some(posts) => ("200 OK", posts.into()),
+                    None => ("404 Not Found", "None".into())
                 }
             }
 
@@ -461,7 +471,7 @@ impl Router {
 
             ("/time", Method::GET) => {
 
-                ("200 OK", database::get_time().into())
+                ("200 OK", database::get_time().to_string().into())
             }
     
             _ => {
@@ -492,9 +502,11 @@ impl Router {
             "gif" => "image/gif",
             "ico" => "image/x-icon",
             "svg" => "image/svg+xml",
-            "json" | "/posts" | "/sub_posts" => "application/json",
+            "json" | "/posts" | "/sub_posts"  => "application/json",
+            path if 
+            path.starts_with("/user/") ||
+            path.starts_with("/posts/user/") => "application/json",
             _ => "text/plain",
-
         };
 
         Self::respond(status, data, hmap!{"Content-Type"=>content_type,
@@ -507,7 +519,7 @@ impl Router {
     fn connection(mut stream: TcpStream) {
 
         const HEADERS_SIZE: usize = 4096;
-        const MAX_REQ_SİZE: usize = 1024 * 1024 * 5;
+        const MAX_REQ_SİZE: usize = 1024 * 1024 * 10;
     
         let mut header_buffer = [0; HEADERS_SIZE];
         let mut total_bytes_read = 0;
