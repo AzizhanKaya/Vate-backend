@@ -230,26 +230,22 @@ pub fn post(mut post: Post) -> Result<(), String> {
             }
         }
 
-        if found {
-              
-            file.seek(SeekFrom::Start(position as u64));
-
-            
-            let mut remainder = Vec::new();
-            file.read_to_end(&mut remainder);
-
-            file.seek(SeekFrom::Start(position as u64));
-
-            let data = format!("{}{}\n", " ".repeat(level), current_post.format());
-
-            file.write_all(data.as_bytes());
-
-            file.write_all(&remainder);
-
-            return Ok(());
+        if !found {
+            return Err("Couldn't find the post-chain".to_string())
         }
+
+        file.seek(SeekFrom::Start(position as u64));
+        let mut remainder = Vec::new();
+        file.read_to_end(&mut remainder);
+        file.seek(SeekFrom::Start(position as u64));
+
+        let data = format!("{}{}\n", " ".repeat(level), current_post.format());
+
+        file.write_all(data.as_bytes());
+        file.write_all(&remainder);
+
+        return Ok(());
         
-        Err("Couldn't find the post-chain".to_string())
         }
     }
 }
@@ -260,13 +256,11 @@ fn get_likes_and_posts_count(post_path: &str, post: &Post) -> Result<(u64, u64),
     let reader = BufReader::new(&file);
     
     let mut post_iter = post.iter();
-    let mut current_post = post_iter.next().unwrap();
     let mut lines = reader.lines();
     
-    let mut expected_line = current_post.format();
+    let mut expected_line = post_iter.next().unwrap().format();
 
     let mut i = 0;
-    let mut found = false;
     let mut level;
 
     while let Some(line) = lines.next() {
@@ -281,52 +275,42 @@ fn get_likes_and_posts_count(post_path: &str, post: &Post) -> Result<(u64, u64),
 
         if level == i && line.trim() == expected_line {
 
-
-            match &current_post.post {
-                
+            i+=1;
+            match post_iter.next() {
+                    
                 Some(post) => {
-                    i+=1
+                    expected_line = post.format();
                 }
 
                 None => {
-                    found = true;
-                    i+=1;
                     break;
                 }
             }
-
-            current_post = post_iter.next().unwrap();
-            expected_line = current_post.format();
-            
         }
     }
 
     let expected_message = "&L";
     let mut likecount: u64 = 0;
     let mut posts_len: u64 = 0;
+    
+    while let Some(line) = lines.next(){
 
-    if found {
-              
-        while let Some(line) = lines.next(){
+        let line = line.map_err(|e| e.to_string())?;
+        level = line.chars().take_while(|&c| c == ' ').count();
 
-            let line = line.map_err(|e| e.to_string())?;
-            level = line.chars().take_while(|&c| c == ' ').count();
+        let message: &str = line.trim().split(':').nth(2).unwrap_or("");
 
-            let message: &str = line.trim().split(':').nth(2).unwrap_or("");
-
-            if level < i {
-                break;
-            }
-
-            if level == i {
-                if message == expected_message{
-                    likecount += 1;
-                } else {
-                    posts_len += 1;
-                }
-            }
+        if level < i {
+            break;
         }
 
+        if level == i {
+            if message == expected_message{
+                likecount += 1;
+            } else {
+                posts_len += 1;
+            }
+        }
     }
 
     Ok((likecount, posts_len))
@@ -592,9 +576,8 @@ pub fn get_sub_posts(post: Post) -> Result<Option<String>, String> {
     let reader = BufReader::new(&file);
 
     let mut post_iter = post.iter();
-    let mut current_post = post_iter.next().unwrap();
     
-    let mut expected_line = current_post.format();
+    let mut expected_line = post_iter.next().unwrap().format();
 
     let mut lines = reader.lines();
     let mut i = 0;
@@ -609,11 +592,10 @@ pub fn get_sub_posts(post: Post) -> Result<Option<String>, String> {
         if level == i && line.trim() == expected_line {
 
             i+=1;
-            match &current_post.post {
+            match post_iter.next() {
                     
                 Some(post) => {
-                    current_post = post_iter.next().unwrap();
-                    expected_line = current_post.format();
+                    expected_line = post.format();
                 }
 
                 None => {
@@ -621,66 +603,69 @@ pub fn get_sub_posts(post: Post) -> Result<Option<String>, String> {
                     break;
                 }
             }
-
-            
         }
+    }
+
+    if !found {
+        return Err("Couldn't find the post-chain".to_string())
     }
 
     let mut posts_json = Vec::new();
 
-    if found {
+    let mut post_mut = post.clone();
 
-        let mut post_mut = post.clone();
+    while let Some(line) = lines.next()  {
 
-        while let Some(line) = lines.next()  {
+        let line = line.map_err(|e| e.to_string())?;
+        level = line.chars().take_while(|&c| c == ' ').count();
 
-            let line = line.map_err(|e| e.to_string())?;
-            level = line.chars().take_while(|&c| c == ' ').count();
+        if level < i {
+            break;
+        }
 
-            if level < i {
-                break;
+        if level == i {
+
+            let parts: Vec<&str> = line.split(':').collect();
+
+            let (pub_key, subject, message, time,sign) = (parts[0].trim(), parts[1], parts[2], parts[3], parts[4].trim());
+
+            if message == "&L" {
+                continue;
             }
+            
+            let sub_post: Box<Post> = Box::new(Post::new(&format!(
+            r#"
+            {{
+                "pub_key": "{pub_key}",
+                "subject": "{subject}",
+                "message": "{message}",
+                "time": "{time}",
+                "sign": "{sign}"
+            }}"#
+            )).unwrap());
 
-            if level == i {
+            post_mut.last_mut().post = Some(sub_post);
 
-                let parts: Vec<&str> = line.split(':').collect();
+            let (likes, posts_len) = get_likes_and_posts_count(&post_path.to_string_lossy(), &post_mut).unwrap();
+            
+            let user = user(pub_key)?;
+            let account: Value = serde_json::from_str(&user).expect("Json parsing error");
 
-                let (pub_key, subject, message, time,sign) = (parts[0].trim(), parts[1], parts[2], parts[3], parts[4].trim());
-                
-                let sub_post: Box<Post> = Box::new(Post::new(&format!(
-                r#"
-                {{
-                    "pub_key": "{pub_key}",
-                    "subject": "{subject}",
-                    "message": "{message}",
-                    "time": "{time}",
-                    "sign": "{sign}"
-                }}"#
-                )).unwrap());
-
-                post_mut.post = Some(sub_post);
-
-                let (likes, posts_len) = get_likes_and_posts_count(&post_path.to_string_lossy(), &post_mut).unwrap();
-                
-                let user = user(pub_key).unwrap();
-                let account: Value = serde_json::from_str(&user).expect("Json parsing error");
-
-                let post_json = json!({
-                    "account":{
-                        "img_type":account["img_type"],
-                        "username":account["username"],
-                        "pub_key": pub_key,
-                    },
-                    "subject": subject,
-                    "message": message,
-                    "time": time,
-                    "sign": sign,
-                    "likes": likes,
-                    "posts": posts_len
-                });
-        
-                posts_json.push(post_json);
-            }
+            let post_json = json!({
+                "account":{
+                    "img_type":account["img_type"],
+                    "username":account["username"],
+                    "pub_key": pub_key,
+                },
+                "subject": subject,
+                "message": message,
+                "time": time,
+                "sign": sign,
+                "likes": likes,
+                "posts": posts_len
+            });
+    
+            posts_json.push(post_json);
         }
     }
 
@@ -692,11 +677,211 @@ pub fn get_sub_posts(post: Post) -> Result<Option<String>, String> {
 
 }
 
-pub fn like(pub_key: &str, content: &str,sign: &str, hash: &str) -> Result<(), String> {
+pub fn delete(post: Post) -> Result<(), String> {
+
+    let dir_path = Path::new(&post.pub_key);
+
+    if !dir_path.exists() {
+        return Err("Owner of the post has not found".to_string());
+    }
+
+    let mut posts = vec![];
+
+    for entry in fs::read_dir(dir_path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if file_name_str.ends_with(&format!(".{}.{}.post", post.subject, post.time)) {
+            posts.push(file_name_str.to_string());
+        }
+    }
+
+    let file_name: &str = posts.get(0).ok_or("Post not found")?;
+
+    let file_path = dir_path.join(file_name);
+    let mut file = OpenOptions::new().read(true).write(true).open(&file_path).map_err(|e| e.to_string())?;
+    let reader = BufReader::new(&file);
+
+    let mut post_iter = post.iter();
+    let mut current_post = post_iter.next().unwrap();
+    let mut lines = reader.lines();
+    
+    let mut expected_line = current_post.format();
+    let liked = current_post.last().format();
+
+    let mut i = 0;
+    let mut position = 0;
+    let mut found = false;
+
+    while let Some(line) = lines.next() {
+        let line = line.map_err(|e| e.to_string())?;
+        let level = line.chars().take_while(|&c| c == ' ').count();
+        position += line.len() + 1;
+
+        if level < i {
+            break;
+        }
+
+        if level == i && line.trim() == expected_line {
+
+            current_post = post_iter.next().unwrap();
+            expected_line = current_post.format();
+
+            i += 1;
+            if current_post.post.is_none() {
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if !found {
+        return Err("Couldn't find the post-chain".to_string());
+    }
+
+    let mut lines_to_write = Vec::new();
+    let mut post_deleted = false;
+
+    for line in lines {
+        let line = line.map_err(|e| e.to_string())?;
+        let level = line.chars().take_while(|&c| c == ' ').count();
+
+        if level == i && line.trim() == expected_line && !post_deleted {
+            post_deleted = true;
+            continue;
+        }
+
+        lines_to_write.push(format!("{line}\n"));
+    }
+    
+    if !post_deleted {
+        return Err("Could not find the post to delete.".to_string());
+    }
+
+    file.seek(SeekFrom::Start(position as u64));
+
+    let concatenated_lines = lines_to_write.concat();
+    file.write_all(concatenated_lines.as_bytes());
+    file.set_len(position as u64 + concatenated_lines.len() as u64);
+
+    return Ok(());
+
+}
 
 
+pub fn like(post: Post) -> Result<(), String> {
 
-    todo!()
+    if post.last().message != "&L" {
+        return Err("Like token is invalid".to_string());
+    }
+
+    let dir_path = Path::new(&post.pub_key);
+
+    if !dir_path.exists() {
+        return Err("Owner of the post has not found".to_string());
+    }
+
+    let mut posts = vec![];
+
+    for entry in fs::read_dir(dir_path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if file_name_str.ends_with(&format!(".{}.{}.post", post.subject, post.time)) {
+            posts.push(file_name_str.to_string());
+        }
+    }
+
+    let file_name: &str = posts.get(0).ok_or("Post not found")?;
+
+    let file_path = dir_path.join(file_name);
+    let mut file = OpenOptions::new().read(true).write(true).open(&file_path).map_err(|e| e.to_string())?;
+    let reader = BufReader::new(&file);
+
+    let mut post_iter = post.iter();
+    let mut current_post = post_iter.next().unwrap();
+    let mut lines = reader.lines();
+    
+    let mut expected_line = current_post.format();
+    let liked = current_post.last().format();
+
+    let mut i = 0;
+    let mut position = 0;
+    let mut found = false;
+
+    while let Some(line) = lines.next() {
+
+        let line = line.map_err(|e| e.to_string())?;
+        let level = line.chars().take_while(|&c| c == ' ').count();
+        position += line.len() + 1;
+
+        if level < i {
+            break;
+        }
+
+        if level == i && line.trim() == expected_line {
+
+            current_post = post_iter.next().unwrap();
+            expected_line = current_post.format();
+
+            i+=1;
+            match &current_post.post {
+                
+                Some(post) => {
+                    
+                }
+
+                None => {
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !found {
+        return Err("Couldn't find the post-chain".to_string())
+    }
+
+    let mut liked = false;
+
+    while let Some(line) = lines.next() {
+
+        let line = line.map_err(|e| e.to_string())?;
+        let level = line.chars().take_while(|&c| c == ' ').count();
+
+        if level < i {
+            break;
+        }
+
+        let parts: Vec<&str> = line.trim().split(':').collect();
+        let (pub_key, message) = (parts[0], parts[2]);
+
+        if level == i && message == "&L" && pub_key == post.last().pub_key {
+            liked = true;
+            break;
+        }
+    }
+
+    if liked {
+        return Err("Already liked the post".to_string())
+    }
+
+
+    file.seek(SeekFrom::Start(position as u64));
+    let mut remainder = Vec::new();
+    file.read_to_end(&mut remainder);
+    file.seek(SeekFrom::Start(position as u64));
+
+    let data = format!("{}{}\n", " ".repeat(i), current_post.format());
+
+    file.write_all(data.as_bytes());
+    file.write_all(&remainder);
+
+    return Ok(());
+
 }
 
 pub fn upload_profile_pic(path: &str, data: Vec<u8>) -> Result<(), String> {
@@ -787,7 +972,64 @@ pub fn user(user: &str) -> Result<String, String> {
 
 }
 
+#[derive(serde::Serialize)]
+struct Topic {
+    title: String,
+    posts: usize
+}
 
+pub fn topics(num: u8) -> Option<String> {
+    use std::collections::HashMap;
+
+    let mut topics: HashMap<String, usize> = HashMap::new();
+
+    for user in fs::read_dir(".").unwrap() {
+        let user = user.unwrap();
+        let user_folder = user.file_name();
+        let user_folder_name = user_folder.to_string_lossy();
+
+        if !user_folder_name.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+
+        if user.path().is_dir() {
+            let files = fs::read_dir(user.path()).unwrap();
+
+            for file in files {
+                let file = file.unwrap();
+                let file_name = file.file_name();
+                let file_name = file_name.to_string_lossy();
+
+                let parts: Vec<&str> = file_name.split('.').collect();
+
+                if parts.len() != 4 || *parts.last().unwrap() != "post" {
+                    continue;
+                }
+
+                let post_subject = parts[1].to_string();
+
+                *topics.entry(post_subject).or_insert(0) += 1;
+            }
+        }
+    }
+
+    if topics.is_empty() {
+        return None;
+    }
+
+    
+    let mut topics: Vec<Topic> = topics
+    .into_iter()
+    .map(|(title, posts)| Topic { title, posts })
+    .collect();
+
+    topics.sort_unstable_by(|a, b| b.posts.cmp(&a.posts));
+
+    topics.truncate(num as usize);
+
+
+    Some(serde_json::to_string(&topics).unwrap())
+}
 
 fn backup() {
     todo!()

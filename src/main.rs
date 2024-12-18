@@ -106,7 +106,7 @@ impl HTTP {
             path,
             params,
             headers,
-            data: data
+            data
         })
     }
 }
@@ -134,6 +134,14 @@ impl Post {
     pub fn last(&self) -> &Post {
         let mut current = self;
         while let Some(ref next_post) = current.post {
+            current = next_post;
+        }
+        current
+    }
+
+    pub fn last_mut(&mut self) -> &mut Post {
+        let mut current = self;
+        while let Some(ref mut next_post) = current.post {
             current = next_post;
         }
         current
@@ -334,7 +342,7 @@ impl Router {
 
                 if let (Some(subject),Some(time), Some(direction)) = (http.params.get("sub"), http.params.get("t"), http.params.get("d")){
 
-                    let default_post_num = 10;
+                    let default_post_num = 50;
                     let post_num = http.params.get("n")
                     .map(|n| n.parse::<u8>().unwrap_or(default_post_num))
                     .unwrap_or(default_post_num);
@@ -402,6 +410,86 @@ impl Router {
                 }
                 
                 
+            }
+
+            ("/delete", Method::POST) => {
+
+                let data_string = String::from_utf8(http.data).unwrap_or_default();
+                
+                let mut posts: Post = match Post::new(&data_string) {
+                    Some(posts) => posts,
+                    None => return Self::respond("400 Bad Request", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
+                };
+
+                let post_hash = posts.hash();
+                let post: &Post = posts.last();
+                let pub_key: &str = &post.pub_key;
+
+                let sign: &str = http.headers.get("Sign").unwrap();
+                let padding: &str = http.headers.get("Padding").unwrap();
+
+                let hash = digest(format!("{}:{}",post_hash,padding));
+                
+                match verify::verify(pub_key, &hash, sign) {
+
+                    Ok(valid) => {
+                        if valid {
+                            match database::delete(posts) {
+                                Ok(()) => ("200 OK", "Deleted successfully".into()),
+                                Err(e) => ("500 Internal Server Error", e.into())
+                            }
+                        } 
+                        else {
+                            ("401 Unauthorized", "Invalid signature".into())
+                        }
+                    }
+                    Err(e) => ("500 Internal Server Error", e.into())
+                }
+                
+                
+            }
+
+            ("/like", Method::POST) => {
+
+                let data_string = String::from_utf8(http.data).unwrap_or_default();
+                
+                let mut posts: Post = match Post::new(&data_string) {
+                    Some(posts) => posts,
+                    None => return Self::respond("400 Bad Request", "Invalid json format for post".into(), hmap!{"Content-Type"=>"text/plain"})
+                };
+                
+                let post_hash = posts.hash();
+                let post: &Post = posts.last();
+                let pub_key: &str = &post.pub_key;
+                let sign: &str = &post.sign;
+                
+                match verify::verify(pub_key, &post_hash, sign) {
+
+                    Ok(valid) => {
+                        if valid {
+                            match database::like(posts) {
+                                Ok(()) => ("200 OK", "Liked successfully".into()),
+                                Err(e) => ("500 Internal Server Error", e.into())
+                            }
+                        } 
+                        else {
+                            ("401 Unauthorized", "Invalid signature".into())
+                        }
+                    }
+                    Err(e) => ("500 Internal Server Error", e.into())
+                }
+            }
+
+            ("/topics", Method::GET) => {
+
+                let num = http.params.get("n")
+                    .map(|n| n.parse::<u8>().unwrap_or(10))
+                    .unwrap_or(10);
+
+                match database::topics(num) {
+                    Some(topics) => ("200 OK", topics.into()),
+                    None => ("404 Not Found", "No topics found".into())
+                }
             }
             
             (path, Method::GET) if path.starts_with("/user/") => {
@@ -502,10 +590,9 @@ impl Router {
             "gif" => "image/gif",
             "ico" => "image/x-icon",
             "svg" => "image/svg+xml",
-            "json" | "/posts" | "/sub_posts"  => "application/json",
+            "json" | "/posts" | "/sub_posts" | "/topics"  => "application/json",
             path if 
-            path.starts_with("/user/") ||
-            path.starts_with("/posts/user/") => "application/json",
+            path.starts_with("/user/") || path.starts_with("/posts/user/") => "application/json",
             _ => "text/plain",
         };
 
